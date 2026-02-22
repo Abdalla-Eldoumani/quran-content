@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a comprehensive verses.json covering the entire Quran.
+Generate verses.json from surah metadata, curated breakpoints, and famous verse list.
 
 Groups verses into meaningful passages (not random single-verse picks).
 Rotates reciters and scenery queries for variety.
@@ -671,7 +671,7 @@ def add_famous_verses(entries):
             "surah": surah,
             "ayah": start,
             "ayah_end": end,
-            "name": f"★ {name}",
+            "name": f"{name}",
             "reciter": RECITERS[reciter_idx % len(RECITERS)],
             "scenery_query": SCENERY_QUERIES[scenery_idx % len(SCENERY_QUERIES)],
         }
