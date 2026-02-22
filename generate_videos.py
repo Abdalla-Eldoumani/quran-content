@@ -1,0 +1,582 @@
+#!/usr/bin/env python3
+"""
+Quran Verse Video Generator
+
+Generates short-form vertical videos (1080x1920) of Quran verses.
+Arabic text appears in timed chunks (~5 words) synced to the recitation audio,
+over scenic background videos from Pexels.
+"""
+
+import argparse
+import io
+import json
+import os
+import random
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+# Fix Windows console encoding for Arabic text output
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+import arabic_reshaper
+import requests
+from bidi.algorithm import get_display
+from PIL import Image, ImageDraw, ImageFont
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+VIDEO_WIDTH = 1080
+VIDEO_HEIGHT = 1920
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+FONTS_DIR = os.path.join(SCRIPT_DIR, "fonts")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+VERSES_FILE = os.path.join(SCRIPT_DIR, "verses.json")
+LOG_FILE = os.path.join(OUTPUT_DIR, "generation.log")
+
+ARABIC_FONT_PATH = os.path.join(FONTS_DIR, "Amiri-Regular.ttf")
+ENGLISH_FONT_PATH = os.path.join(FONTS_DIR, "OpenSans-Regular.ttf")
+
+ARABIC_FONT_SIZE = 72
+REFERENCE_FONT_SIZE = 30
+
+ALQURAN_API_BASE = "https://api.alquran.cloud/v1"
+PEXELS_API_BASE = "https://api.pexels.com"
+
+AUDIO_DELAY_S = 1.5
+EXTRA_DURATION_S = 3.0
+API_SLEEP_S = 2
+WORDS_PER_CHUNK = 5
+
+FALLBACK_RECITER = "ar.alafasy"
+FALLBACK_SCENERY = "ocean waves aerial"
+
+# Arabic reshaper config: preserve tashkeel/harakat
+RESHAPER_CONFIG = {
+    "delete_harakat": False,
+    "delete_tatweel": False,
+}
+
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+
+_log_lines = []
+
+
+def log(msg):
+    """Print and buffer a log line."""
+    print(msg)
+    _log_lines.append(msg)
+
+
+def save_log():
+    """Write buffered log to output/generation.log."""
+    try:
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(_log_lines) + "\n")
+    except Exception:
+        pass
+
+
+# ── Verse loading ────────────────────────────────────────────────────────────
+
+def load_verses():
+    """Read and validate verses.json."""
+    with open(VERSES_FILE, "r", encoding="utf-8") as f:
+        verses = json.load(f)
+    required_keys = {"surah", "ayah", "name", "reciter", "scenery_query"}
+    for i, v in enumerate(verses):
+        missing = required_keys - set(v.keys())
+        if missing:
+            raise ValueError(f"Verse {i} missing keys: {missing}")
+        if "ayah_end" not in v:
+            v["ayah_end"] = v["ayah"]
+    return verses
+
+
+# ── API helpers ──────────────────────────────────────────────────────────────
+
+def fetch_verse_text(surah, ayah_start, ayah_end):
+    """Fetch Arabic (Uthmani) text for a verse range."""
+    all_arabic = []
+    surah_name = ""
+    surah_name_ar = ""
+
+    for ayah in range(ayah_start, ayah_end + 1):
+        url = f"{ALQURAN_API_BASE}/ayah/{surah}:{ayah}/editions/quran-uthmani"
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()["data"][0]
+        all_arabic.append(data["text"])
+        if not surah_name:
+            surah_name = data["surah"]["englishName"]
+            surah_name_ar = data["surah"]["name"]
+        if ayah < ayah_end:
+            time.sleep(1)
+
+    arabic_text = " ".join(all_arabic)
+    return arabic_text, surah_name, surah_name_ar
+
+
+def fetch_audio(surah, ayah_start, ayah_end, reciter, dest):
+    """Download recitation audio for a verse range. Concatenates if multiple ayahs."""
+    audio_files = []
+    tmpdir = tempfile.mkdtemp(prefix="quran_audio_")
+
+    try:
+        for ayah in range(ayah_start, ayah_end + 1):
+            url = f"{ALQURAN_API_BASE}/ayah/{surah}:{ayah}/{reciter}"
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            audio_url = resp.json()["data"]["audio"]
+            log(f"    Audio URL ({surah}:{ayah}): {audio_url}")
+            time.sleep(API_SLEEP_S)
+
+            audio_path = os.path.join(tmpdir, f"ayah_{ayah}.mp3")
+            audio_resp = requests.get(audio_url, timeout=60)
+            audio_resp.raise_for_status()
+            with open(audio_path, "wb") as f:
+                f.write(audio_resp.content)
+
+            size = os.path.getsize(audio_path)
+            if size == 0:
+                raise RuntimeError(f"Downloaded audio for {surah}:{ayah} is empty (0 bytes)")
+            log(f"    Downloaded {surah}:{ayah} audio: {size} bytes")
+            audio_files.append(audio_path)
+
+        if len(audio_files) == 1:
+            shutil.copy2(audio_files[0], dest)
+        else:
+            concat_list = os.path.join(tmpdir, "concat.txt")
+            with open(concat_list, "w") as f:
+                for ap in audio_files:
+                    f.write(f"file '{ap}'\n")
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", concat_list, "-c", "copy", dest,
+                ],
+                check=True, capture_output=True, text=True,
+            )
+            log(f"    Concatenated {len(audio_files)} audio files")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def get_audio_duration(path):
+    """Get audio duration in seconds using ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
+
+
+def verify_video_has_audio(path):
+    """Check that the output video contains an audio stream."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            path,
+        ],
+        capture_output=True, text=True,
+    )
+    has_audio = "audio" in result.stdout
+    if not has_audio:
+        log("  WARNING: Output video has NO audio stream!")
+    return has_audio
+
+
+def fetch_background_video(query, dest):
+    """Download a random HD portrait-oriented video from Pexels (>= 10s preferred)."""
+    api_key = os.environ.get("PEXELS_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("PEXELS_API_KEY environment variable is not set")
+
+    headers = {"Authorization": api_key}
+
+    def _search(q):
+        url = f"{PEXELS_API_BASE}/videos/search"
+        params = {"query": q, "orientation": "portrait", "size": "large", "per_page": 30}
+        r = requests.get(url, headers=headers, params=params, timeout=30)
+        r.raise_for_status()
+        return r.json().get("videos", [])
+
+    videos = _search(query)
+    if not videos:
+        log(f"    No Pexels results for '{query}', retrying with '{FALLBACK_SCENERY}'")
+        time.sleep(API_SLEEP_S)
+        videos = _search(FALLBACK_SCENERY)
+    if not videos:
+        raise RuntimeError("No background videos found on Pexels")
+
+    long_videos = [v for v in videos if v.get("duration", 0) >= 10]
+    pool = long_videos if long_videos else videos
+    video = random.choice(pool)
+
+    video_files = sorted(
+        video["video_files"],
+        key=lambda vf: vf.get("height", 0),
+        reverse=True,
+    )
+    download_url = video_files[0]["link"]
+    log(f"    Pexels video: {video.get('duration', '?')}s, "
+        f"{video_files[0].get('width', '?')}x{video_files[0].get('height', '?')}")
+
+    time.sleep(API_SLEEP_S)
+    vid_resp = requests.get(download_url, timeout=120, stream=True)
+    vid_resp.raise_for_status()
+    with open(dest, "wb") as f:
+        for chunk in vid_resp.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+
+# ── Arabic text processing ───────────────────────────────────────────────────
+
+_reshaper = arabic_reshaper.ArabicReshaper(configuration=RESHAPER_CONFIG)
+
+
+def reshape_arabic(text):
+    """Reshape Arabic text and apply bidi algorithm. Preserves tashkeel."""
+    reshaped = _reshaper.reshape(text)
+    return get_display(reshaped)
+
+
+def wrap_arabic_text(text, font, max_width, draw):
+    """
+    Wrap Arabic text into lines that fit within max_width.
+    Words are split BEFORE reshaping; each line is reshaped individually
+    to preserve letter connections.
+    """
+    words = text.split()
+    lines = []
+    current_line_words = []
+
+    for word in words:
+        test_line = " ".join(current_line_words + [word])
+        test_display = reshape_arabic(test_line)
+        bbox = draw.textbbox((0, 0), test_display, font=font)
+        width = bbox[2] - bbox[0]
+        if width <= max_width and current_line_words:
+            current_line_words.append(word)
+        elif not current_line_words:
+            current_line_words.append(word)
+        else:
+            line_text = " ".join(current_line_words)
+            lines.append(reshape_arabic(line_text))
+            current_line_words = [word]
+
+    if current_line_words:
+        line_text = " ".join(current_line_words)
+        lines.append(reshape_arabic(line_text))
+
+    return lines
+
+
+def split_into_chunks(text, words_per_chunk=WORDS_PER_CHUNK):
+    """Split Arabic text into groups of ~N words."""
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), words_per_chunk):
+        chunks.append(" ".join(words[i:i + words_per_chunk]))
+    return chunks
+
+
+# ── Overlay rendering ────────────────────────────────────────────────────────
+
+def draw_rounded_rect(draw_ctx, bbox, radius, fill):
+    """Draw a rounded rectangle."""
+    x0, y0, x1, y1 = bbox
+    draw_ctx.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=fill)
+
+
+def render_chunk_overlay(chunk_text, surah_name, surah_name_ar, surah, ayah, ayah_end, dest):
+    """
+    Render a 1080x1920 RGBA PNG for one chunk:
+    - Arabic chunk text centered vertically on screen
+    - Surah reference at the bottom
+    """
+    img = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    arabic_font = ImageFont.truetype(ARABIC_FONT_PATH, ARABIC_FONT_SIZE)
+    reference_font = ImageFont.truetype(ENGLISH_FONT_PATH, REFERENCE_FONT_SIZE)
+
+    max_text_width = VIDEO_WIDTH - 120
+    padding = 30
+    box_fill = (0, 0, 0, 160)
+    shadow_color = (0, 0, 0, 180)
+    text_color = (255, 255, 255, 255)
+    shadow_offset = 2
+    box_x0 = 30
+    box_x1 = VIDEO_WIDTH - 30
+
+    # ── Arabic chunk centered on screen ──
+    arabic_lines = wrap_arabic_text(chunk_text, arabic_font, max_text_width, draw)
+    line_heights = []
+    for line in arabic_lines:
+        bbox = draw.textbbox((0, 0), line, font=arabic_font)
+        line_heights.append(bbox[3] - bbox[1])
+
+    line_spacing = 20
+    total_height = sum(line_heights) + line_spacing * max(len(arabic_lines) - 1, 0)
+
+    block_y = (VIDEO_HEIGHT - total_height) // 2
+    box_y0 = block_y - padding
+    box_y1 = block_y + total_height + padding
+
+    draw_rounded_rect(draw, (box_x0, box_y0, box_x1, box_y1), 20, box_fill)
+
+    y = block_y
+    for i, line in enumerate(arabic_lines):
+        bbox = draw.textbbox((0, 0), line, font=arabic_font)
+        line_w = bbox[2] - bbox[0]
+        x = (VIDEO_WIDTH - line_w) // 2
+        draw.text((x + shadow_offset, y + shadow_offset), line, font=arabic_font, fill=shadow_color)
+        draw.text((x, y), line, font=arabic_font, fill=text_color)
+        y += line_heights[i] + line_spacing
+
+    # ── Reference at bottom ──
+    if ayah == ayah_end:
+        ref_str = f"{surah}:{ayah}"
+    else:
+        ref_str = f"{surah}:{ayah}-{ayah_end}"
+    reference = f"{surah_name_ar}  |  {surah_name}  |  {ref_str}"
+    ref_bbox = draw.textbbox((0, 0), reference, font=reference_font)
+    ref_w = ref_bbox[2] - ref_bbox[0]
+    ref_h = ref_bbox[3] - ref_bbox[1]
+
+    ref_y = VIDEO_HEIGHT - 200
+    ref_box_y0 = ref_y - padding
+    ref_box_y1 = ref_y + ref_h + padding
+    ref_box_x0 = (VIDEO_WIDTH - ref_w) // 2 - padding - 10
+    ref_box_x1 = (VIDEO_WIDTH + ref_w) // 2 + padding + 10
+
+    draw_rounded_rect(draw, (ref_box_x0, ref_box_y0, ref_box_x1, ref_box_y1), 15, box_fill)
+
+    ref_x = (VIDEO_WIDTH - ref_w) // 2
+    draw.text((ref_x + shadow_offset, ref_y + shadow_offset), reference, font=reference_font, fill=shadow_color)
+    draw.text((ref_x, ref_y), reference, font=reference_font, fill=text_color)
+
+    img.save(dest, "PNG")
+
+
+# ── Video composition ────────────────────────────────────────────────────────
+
+def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration):
+    """
+    Compose final video with timed chunk overlays.
+
+    Each chunk overlay is shown for an equal slice of the audio duration,
+    starting after the initial 1.5s silence.
+    """
+    num_chunks = len(chunk_paths)
+    chunk_dur = audio_duration / num_chunks
+
+    # Build input list: bg, chunk PNGs, audio
+    inputs = ["-stream_loop", "-1", "-i", bg_path]
+    for cp in chunk_paths:
+        inputs.extend(["-i", cp])
+    audio_idx = 1 + num_chunks
+    inputs.extend(["-i", audio_path])
+
+    # Build filter_complex
+    filters = [
+        "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,setsar=1[bg]"
+    ]
+
+    prev = "bg"
+    for i in range(num_chunks):
+        start = AUDIO_DELAY_S + i * chunk_dur
+        end = AUDIO_DELAY_S + (i + 1) * chunk_dur
+        out = f"v{i}"
+        filters.append(
+            f"[{prev}][{i + 1}:v]overlay=0:0:format=auto:"
+            f"enable='between(t,{start:.3f},{end:.3f})'[{out}]"
+        )
+        prev = out
+
+    filters.append(
+        f"[{audio_idx}:a]adelay={int(AUDIO_DELAY_S * 1000)}|{int(AUDIO_DELAY_S * 1000)},apad[outa]"
+    )
+
+    filter_str = ";".join(filters)
+
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", filter_str,
+        "-map", f"[{prev}]",
+        "-map", "[outa]",
+        "-t", str(video_duration),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"  FFmpeg stderr: {result.stderr[-800:]}")
+        result.check_returncode()
+
+
+# ── Per-verse pipeline ───────────────────────────────────────────────────────
+
+def process_verse(verse, index, total):
+    """Process a single verse: fetch data, render chunk overlays, compose video."""
+    surah = verse["surah"]
+    ayah = verse["ayah"]
+    ayah_end = verse["ayah_end"]
+    name = verse["name"]
+    reciter = verse["reciter"]
+    query = verse["scenery_query"]
+
+    if ayah == ayah_end:
+        ref_label = f"{surah}:{ayah}"
+    else:
+        ref_label = f"{surah}:{ayah}-{ayah_end}"
+
+    log(f"\n[{index}/{total}] Generating: {name} ({ref_label}) — reciter: {reciter}")
+
+    tmpdir = tempfile.mkdtemp(prefix="quran_video_")
+    try:
+        bg_path = os.path.join(tmpdir, "bg.mp4")
+        audio_path = os.path.join(tmpdir, "audio.mp3")
+
+        # 1. Fetch verse text (Arabic only)
+        log("  Fetching verse text...")
+        arabic, surah_name, surah_name_ar = fetch_verse_text(surah, ayah, ayah_end)
+        time.sleep(API_SLEEP_S)
+
+        # 2. Fetch audio (with fallback reciter)
+        log(f"  Fetching recitation audio ({reciter})...")
+        try:
+            fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
+        except Exception as e:
+            if reciter != FALLBACK_RECITER:
+                log(f"  Audio failed with {reciter}: {e}")
+                log(f"  Retrying with fallback reciter: {FALLBACK_RECITER}")
+                fetch_audio(surah, ayah, ayah_end, FALLBACK_RECITER, audio_path)
+            else:
+                raise
+
+        # 3. Verify audio
+        audio_size = os.path.getsize(audio_path)
+        log(f"  Audio file size: {audio_size} bytes")
+        if audio_size == 0:
+            raise RuntimeError("Audio file is empty")
+
+        # 4. Audio duration
+        audio_duration = get_audio_duration(audio_path)
+        video_duration = audio_duration + EXTRA_DURATION_S
+        log(f"  Audio duration: {audio_duration:.1f}s -> Video: {video_duration:.1f}s")
+        time.sleep(API_SLEEP_S)
+
+        # 5. Fetch background video
+        log("  Fetching background video from Pexels...")
+        fetch_background_video(query, bg_path)
+        time.sleep(API_SLEEP_S)
+
+        # 6. Split text into chunks and render overlays
+        chunks = split_into_chunks(arabic)
+        log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
+        chunk_paths = []
+        for ci, chunk in enumerate(chunks):
+            chunk_dest = os.path.join(tmpdir, f"chunk_{ci:02d}.png")
+            render_chunk_overlay(chunk, surah_name, surah_name_ar, surah, ayah, ayah_end, chunk_dest)
+            chunk_paths.append(chunk_dest)
+
+        # 7. Compose final video
+        output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
+        output_path = os.path.join(OUTPUT_DIR, output_filename)
+        log("  Composing final video with FFmpeg...")
+        compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration)
+
+        # 8. Verify audio in output
+        verify_video_has_audio(output_path)
+
+        log(f"  Done -> {output_filename}")
+        return True
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate Quran verse videos")
+    parser.add_argument("--test", action="store_true", help="Generate only the first verse")
+    parser.add_argument("--verse", type=int, help="Generate only verse N (1-indexed)")
+    args = parser.parse_args()
+
+    if not shutil.which("ffmpeg"):
+        print("ERROR: ffmpeg not found on PATH.")
+        sys.exit(1)
+    if not shutil.which("ffprobe"):
+        print("ERROR: ffprobe not found on PATH.")
+        sys.exit(1)
+    if not os.environ.get("PEXELS_API_KEY"):
+        print("ERROR: PEXELS_API_KEY environment variable is not set.")
+        print("Get a free API key at https://www.pexels.com/api/")
+        sys.exit(1)
+    for font_path in (ARABIC_FONT_PATH, ENGLISH_FONT_PATH):
+        if not os.path.isfile(font_path):
+            print(f"ERROR: Font not found: {font_path}")
+            sys.exit(1)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    verses = load_verses()
+    total_all = len(verses)
+    log(f"Loaded {total_all} verses from {VERSES_FILE}")
+
+    if args.test:
+        verses = [verses[0]]
+        log("--test mode: generating only the first verse")
+    elif args.verse is not None:
+        if args.verse < 1 or args.verse > total_all:
+            print(f"ERROR: --verse must be between 1 and {total_all}")
+            sys.exit(1)
+        verses = [verses[args.verse - 1]]
+        log(f"--verse mode: generating only verse {args.verse}")
+
+    total = len(verses)
+    successes = 0
+    failures = []
+
+    for i, verse in enumerate(verses, start=1):
+        try:
+            if process_verse(verse, i, total):
+                successes += 1
+        except Exception as e:
+            name = verse.get("name", f"{verse['surah']}:{verse['ayah']}")
+            log(f"  ERROR processing {name}: {e}")
+            failures.append(name)
+
+    log("\n" + "=" * 60)
+    log(f"COMPLETE: {successes}/{total} videos generated successfully")
+    if failures:
+        log(f"FAILED ({len(failures)}):")
+        for name in failures:
+            log(f"  - {name}")
+    log(f"Output directory: {OUTPUT_DIR}")
+
+    save_log()
+
+
+if __name__ == "__main__":
+    main()
