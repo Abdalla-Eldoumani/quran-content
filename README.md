@@ -71,7 +71,7 @@ quran-content/
 
 The file contains **1,282 passage entries covering all 6,236 verses** of the Quran:
 
-- **66 famous standalone verses** (marked with ★) appear first — Ayat al-Kursi, du'as of the Prophets, beloved passages. Best for starting your content.
+- **66 famous standalone verses** appear first — Ayat al-Kursi, du'as of the Prophets, beloved passages. Best for starting your content.
 - **1,216 thematic passages** cover the rest, grouped into meaningful ranges of 3–7 ayahs so nothing is cut mid-thought.
 
 Major surahs have curated thematic breakpoints. Short surahs (≤15 ayahs) are kept whole. At one video per day, this is roughly **3.5 years of content**.
