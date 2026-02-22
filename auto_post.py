@@ -78,11 +78,10 @@ def _verse_ref(verse):
 
 
 def build_caption(verse):
-    name = verse["name"].lstrip("★ ")
     ref = _verse_ref(verse)
     reciter = RECITER_NAMES.get(verse["reciter"], verse["reciter"])
     return (
-        f"{name} | {ref}\n\n"
+        f"{verse['name']} | {ref}\n\n"
         f"Recited by Sheikh {reciter}\n\n"
         f"May Allah grant us understanding of His words.\n\n"
         f"#Quran #QuranRecitation #Islam #Muslim #DailyQuran "
@@ -91,14 +90,13 @@ def build_caption(verse):
 
 
 def build_youtube_title(verse):
-    name = verse["name"].lstrip("★ ")
-    return f"{name} | {_verse_ref(verse)} | Quran Recitation #Shorts"
+    return f"{verse['name']} | {_verse_ref(verse)} | Quran Recitation #Shorts"
 
 
 def build_youtube_description(verse):
-    name, ref = verse["name"].lstrip("★ "), _verse_ref(verse)
+    ref = _verse_ref(verse)
     reciter = RECITER_NAMES.get(verse["reciter"], verse["reciter"])
-    return f"{name} | {ref}\n\nRecited by Sheikh {reciter}\n\nMay Allah grant us understanding of His words."
+    return f"{verse['name']} | {ref}\n\nRecited by Sheikh {reciter}\n\nMay Allah grant us understanding of His words."
 
 
 def upload_to_temp_host(video_path):
