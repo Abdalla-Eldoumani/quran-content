@@ -1,10 +1,10 @@
 # Automated Daily Posting — Setup Guide
 
-This guide walks you through setting up fully automated daily posting of Quran verse videos to Instagram, Facebook, and YouTube. Once configured, a GitHub Actions workflow generates one video per day and publishes it to all three platforms without any manual work.
+Set up a GitHub Actions workflow that generates one Quran verse video per day and posts it to Instagram, Facebook, and YouTube.
 
 **Total cost: $0.** Everything uses free-tier services.
 
-**Time to set up: ~1 hour** (one time only, then it runs forever).
+**Setup time:** ~1 hour (one-time).
 
 ---
 
@@ -271,4 +271,4 @@ The only maintenance you might need:
 - If you want to add more verses — edit `generate_verses_json.py` and regenerate
 - If you want to change reciters or scenery — same, edit the generator and re-run
 
-Otherwise, it just runs. Every day. Automatically. Sadaqah jariyah on autopilot.
+Beyond that, the pipeline runs daily with no intervention needed.
