@@ -1,6 +1,6 @@
 # Quran Verse Videos
 
-Generates vertical videos (1080x1920) of Quran verses — Arabic text over scenic backgrounds with recitation audio. Built for Instagram Reels, TikTok, and YouTube Shorts.
+Generates vertical videos (1080×1920) of Quran verses — Arabic text over scenic backgrounds with recitation audio. Built for Instagram Reels, TikTok, and YouTube Shorts.
 
 The text appears in sync with the recitation: roughly five words at a time, centered on screen, then the next group, and so on until the verse ends. Arabic only, no English translation.
 
@@ -9,12 +9,13 @@ The text appears in sync with the recitation: roughly five words at a time, cent
 ```
 quran-content/
 ├── fonts/
-│   ├── Amiri-Regular.ttf        # Arabic font (with tashkeel support)
-│   └── OpenSans-Regular.ttf     # Used for the surah reference line
-├── output/                      # Generated videos land here
-│   └── generation.log           # Log from the last run
-├── verses.json                  # Which verses to generate (edit this)
-├── generate_videos.py           # The main script
+│   ├── Amiri-Regular.ttf          # Arabic font (with tashkeel support)
+│   └── OpenSans-Regular.ttf       # Used for the surah reference line
+├── output/                        # Generated videos land here
+│   └── generation.log             # Log from the last run
+├── verses.json                    # 1,282 passages covering the entire Quran
+├── generate_verses_json.py        # Script to regenerate verses.json
+├── generate_videos.py             # The main video generation script
 └── README.md
 ```
 
@@ -46,15 +47,34 @@ quran-content/
    python generate_videos.py --verse 5
    ```
 
-4. Generate all 30 verses:
+4. Generate all verses:
    ```bash
    python generate_videos.py
    ```
-   This takes a while — each verse needs multiple API calls and an FFmpeg render pass. Videos are saved as `output/verse_001_2_255.mp4`, etc.
+   Each verse needs multiple API calls and an FFmpeg render pass. Videos are saved as `output/verse_001_2_255.mp4`, etc.
 
-## How to pick verses
+   With 1,282 entries in `verses.json`, generating everything takes a long time. Generate in batches or ranges as needed.
 
-Edit `verses.json`. Each entry looks like this:
+## About verses.json
+
+The file contains **1,282 passage entries covering all 6,236 verses** of the Quran:
+
+- **66 famous standalone verses** (marked with ★) appear first — Ayat al-Kursi, du'as of the Prophets, beloved passages. Best for starting your content.
+- **1,216 thematic passages** cover the rest, grouped into meaningful ranges of 3–7 ayahs so nothing is cut mid-thought.
+
+Major surahs have curated thematic breakpoints. Short surahs (≤15 ayahs) are kept whole. At one video per day, this is roughly **3.5 years of content**.
+
+Five reciters are distributed evenly across entries:
+
+| Reciter | API ID |
+|---|---|
+| Mishary Rashid al-Afasy | `ar.alafasy` |
+| Mahmoud Khaleel al-Husary | `ar.husary` |
+| Muhammad Siddiq al-Minshawi | `ar.minshawi` |
+| Muhammad Ayyub | `ar.muhammadayyoub` |
+| Abdul Rahman As-Sudais | `ar.abdurrahmaansudais` |
+
+Each entry looks like this:
 
 ```json
 {
@@ -75,19 +95,38 @@ Edit `verses.json`. Each entry looks like this:
 | `reciter` | Reciter ID from AlQuran Cloud API |
 | `scenery_query` | Pexels search query for the background video |
 
-Available reciters: `ar.alafasy`, `ar.husary`, `ar.minshawi`, `ar.muhammadayyoub`, `ar.abdurrahmaansudais`.
+## Customizing verses.json
 
-For scenery queries, stick to nature terms. Add "aerial", "drone", "timelapse", or "close up" to avoid results with people in them.
+Edit `generate_verses_json.py` and re-run it:
+
+```bash
+python generate_verses_json.py
+```
+
+Inside the script you can:
+- Add or remove reciters in the `RECITERS` list
+- Change scenery queries in the `SCENERY_QUERIES` list
+- Add curated thematic breakpoints for any surah in `CURATED_PASSAGES`
+- Add famous standalone verses in `FAMOUS_VERSES`
+- Adjust the auto-chunk size (default: 5 verses per passage)
+
+For scenery queries, stick to nature terms and add "aerial", "drone", "timelapse", or "close up" to reduce the chance of videos containing people.
 
 ## Where the data comes from
 
-- Verse text and audio: [AlQuran Cloud API](https://alquran.cloud/api) (quran-uthmani edition, full tashkeel)
+- Verse text and audio: [AlQuran Cloud API](https://alquran.cloud/api) — `quran-uthmani` edition with full tashkeel
 - Background clips: [Pexels Videos API](https://www.pexels.com/api/)
 
-Nothing is hardcoded — all text and audio is fetched at runtime.
+No Quranic content is hardcoded or AI-generated. All text and audio is fetched from authenticated sources at runtime.
 
----
+## Posting
 
-**N/A — Posting and scheduling**
+This project handles video generation only. Upload to platforms manually:
 
-This project only handles video generation. Uploading to Instagram, TikTok, or YouTube is a manual step. None of these platforms offer a public API for posting Reels/Shorts that individuals can freely use, so there is no reliable way to automate that part. Generate your videos, review them, and upload by hand.
+- **Instagram + Facebook**: Meta Business Suite (business.facebook.com) — schedule Reels up to 75 days ahead, free
+- **TikTok**: TikTok Studio (tiktok.com/tiktokstudio) — schedule up to 10 days ahead, free
+- **YouTube Shorts**: YouTube Studio — schedule uploads, free
+
+## License
+
+MIT
