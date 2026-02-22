@@ -8,14 +8,22 @@ The text appears in sync with the recitation: roughly five words at a time, cent
 
 ```
 quran-content/
+├── .github/workflows/
+│   └── daily_post.yml             # GitHub Actions: daily generate + post
+├── docs/
+│   └── automation-setup.md        # Step-by-step automation setup guide
 ├── fonts/
 │   ├── Amiri-Regular.ttf          # Arabic font (with tashkeel support)
 │   └── OpenSans-Regular.ttf       # Used for the surah reference line
-├── output/                        # Generated videos land here
-│   └── generation.log             # Log from the last run
+├── output/                        # Generated videos land here (gitignored)
 ├── verses.json                    # 1,282 passages covering the entire Quran
+├── state.json                     # Tracks next verse index + run history
 ├── generate_verses_json.py        # Script to regenerate verses.json
 ├── generate_videos.py             # The main video generation script
+├── auto_post.py                   # Automated daily posting pipeline
+├── setup_meta.py                  # One-time Meta token setup
+├── setup_youtube.py               # One-time YouTube OAuth setup
+├── .env.example                   # Template for environment variables
 └── README.md
 ```
 
@@ -27,6 +35,10 @@ quran-content/
 - Python packages:
   ```
   pip install requests python-bidi arabic-reshaper Pillow
+  ```
+  For automated posting, also install:
+  ```
+  pip install python-dotenv google-auth-oauthlib google-api-python-client
   ```
 
 ## How to generate videos
@@ -119,9 +131,52 @@ For scenery queries, stick to nature terms and add "aerial", "drone", "timelapse
 
 No Quranic content is hardcoded or AI-generated. All text and audio is fetched from authenticated sources at runtime.
 
-## Posting
+## Automated daily posting
 
-This project handles video generation only. Upload to platforms manually:
+A GitHub Actions workflow generates one video per day and posts it to Instagram, Facebook, and YouTube automatically.
+
+**Supported platforms:**
+- **Instagram** — posted as a Reel via Meta Graph API
+- **Facebook** — posted as a native video to your Page
+- **YouTube** — uploaded as a Short via YouTube Data API v3
+
+For detailed step-by-step instructions, see [docs/automation-setup.md](docs/automation-setup.md).
+
+### Quick start
+
+1. Set up Meta credentials:
+   ```bash
+   # Fill in META_SHORT_TOKEN, META_APP_ID, META_APP_SECRET in .env
+   python3 setup_meta.py
+   ```
+
+2. Set up YouTube credentials:
+   ```bash
+   # Fill in YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET in .env
+   python3 setup_youtube.py
+   ```
+
+3. Copy all tokens to GitHub repository secrets (Settings > Secrets and variables > Actions):
+   - `PEXELS_API_KEY`, `META_ACCESS_TOKEN`, `IG_USER_ID`, `FB_PAGE_ID`
+   - `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`
+
+4. The workflow runs daily at 2 PM UTC. To trigger manually: Actions > Daily Quran Post > Run workflow.
+
+5. Test locally:
+   ```bash
+   python3 auto_post.py --dry-run          # Simulate everything
+   python3 auto_post.py --generate-only    # Generate one video, don't post
+   python3 auto_post.py --platform meta    # Post to Meta only
+   python3 auto_post.py --platform youtube # Post to YouTube only
+   ```
+
+**YouTube note:** API projects created after July 2020 upload videos as private until you pass a compliance audit in Google Cloud Console (APIs & Services > YouTube Data API v3 > Compliance). Videos will upload but stay private until the audit passes.
+
+`state.json` tracks which verse is next. The workflow commits it back to the repo after each run, so the pipeline picks up where it left off.
+
+## Manual posting
+
+You can also upload videos manually:
 
 - **Instagram + Facebook**: Meta Business Suite (business.facebook.com) — schedule Reels up to 75 days ahead, free
 - **TikTok**: TikTok Studio (tiktok.com/tiktokstudio) — schedule up to 10 days ahead, free
