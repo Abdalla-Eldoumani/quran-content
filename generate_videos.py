@@ -509,7 +509,7 @@ def process_verse(verse, index, total):
         verify_video_has_audio(output_path)
 
         log(f"  Done -> {output_filename}")
-        return True
+        return output_path
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
