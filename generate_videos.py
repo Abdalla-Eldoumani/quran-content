@@ -51,7 +51,7 @@ PEXELS_API_BASE = "https://api.pexels.com"
 AUDIO_DELAY_S = 1.5
 EXTRA_DURATION_S = 3.0
 API_SLEEP_S = 2
-WORDS_PER_CHUNK = 5
+WORDS_PER_CHUNK = 2
 
 FALLBACK_RECITER = "ar.alafasy"
 FALLBACK_SCENERY = "ocean waves aerial"
@@ -407,38 +407,64 @@ def split_into_chunks(text, words_per_chunk=WORDS_PER_CHUNK):
     return chunks
 
 
-def build_chunk_timings(verse_timestamps, ayah_start, ayah_end, clip_start_ms,
-                        words_per_chunk=WORDS_PER_CHUNK):
-    """Build per-chunk (start_s, end_s) timings from word-level segments.
-
-    Flattens all word segments across ayahs into one ordered list, converts
-    from absolute chapter milliseconds to clip-relative seconds, then groups
-    into chunks of words_per_chunk matching how split_into_chunks groups text.
-    Returns a list of (start_s, end_s) tuples, or None on failure.
-    """
-    # Flatten all segments in ayah order
+def _flatten_segments(verse_timestamps, ayah_start, ayah_end):
+    """Flatten word segments across all ayahs into one ordered list."""
     all_segments = []
     for ayah in range(ayah_start, ayah_end + 1):
-        segments = verse_timestamps.get(ayah, [])
-        all_segments.extend(segments)
+        all_segments.extend(verse_timestamps.get(ayah, []))
+    return all_segments
 
+
+def _map_chunks_to_segments(num_text_words, num_segments, words_per_chunk):
+    """Map text chunk boundaries to segment index ranges via proportional mapping.
+
+    AlQuran Cloud and Quran.com tokenize Arabic differently, so the text word
+    count and segment count often don't match. This maps each text chunk to the
+    corresponding segment range proportionally, so timing always works regardless
+    of word count differences.
+    """
+    num_chunks = -(-num_text_words // words_per_chunk)  # ceil division
+    ranges = []
+    for i in range(num_chunks):
+        text_start = i * words_per_chunk
+        text_end = min((i + 1) * words_per_chunk, num_text_words)
+        seg_start = round(text_start * num_segments / num_text_words)
+        seg_end = round(text_end * num_segments / num_text_words)
+        seg_start = min(seg_start, num_segments - 1)
+        seg_end = max(seg_start + 1, min(seg_end, num_segments))
+        ranges.append((seg_start, seg_end))
+    return ranges
+
+
+def build_chunk_timings(verse_timestamps, ayah_start, ayah_end, clip_start_ms,
+                        num_text_words, words_per_chunk=WORDS_PER_CHUNK):
+    """Build per-chunk (start_s, end_s) timings from word-level segments.
+
+    Uses proportional mapping between text words and API segments so that
+    different word counts between AlQuran Cloud and Quran.com don't cause
+    a fallback to equal-division timing.
+    Returns a list of (start_s, end_s) tuples, or None on failure.
+    """
+    all_segments = _flatten_segments(verse_timestamps, ayah_start, ayah_end)
     if not all_segments:
         return None
 
-    # Group into chunks of words_per_chunk
+    chunk_ranges = _map_chunks_to_segments(
+        num_text_words, len(all_segments), words_per_chunk
+    )
+
     timings = []
-    for i in range(0, len(all_segments), words_per_chunk):
-        group = all_segments[i:i + words_per_chunk]
-        # Convert from absolute chapter ms to clip-relative seconds
-        chunk_start_s = (group[0][1] - clip_start_ms) / 1000.0
-        chunk_end_s = (group[-1][2] - clip_start_ms) / 1000.0
+    for seg_start, seg_end in chunk_ranges:
+        chunk_start_s = (all_segments[seg_start][1] - clip_start_ms) / 1000.0
+        chunk_end_s = (all_segments[seg_end - 1][2] - clip_start_ms) / 1000.0
         timings.append((chunk_start_s, chunk_end_s))
 
     return timings
 
 
 def build_proportional_chunk_timings(verse_timestamps, ayah_start, ayah_end,
-                                     actual_duration, words_per_chunk=WORDS_PER_CHUNK):
+                                     actual_duration, num_text_words,
+                                     words_per_chunk=WORDS_PER_CHUNK):
     """Build chunk timings by scaling a reference reciter's word segments.
 
     Used when the actual reciter has no Quran.com timestamps (e.g., Muhammad Ayyub).
@@ -446,15 +472,10 @@ def build_proportional_chunk_timings(verse_timestamps, ayah_start, ayah_end,
     to the actual audio duration. Returns a list of (start_s, end_s) tuples,
     or None on failure.
     """
-    all_segments = []
-    for ayah in range(ayah_start, ayah_end + 1):
-        segments = verse_timestamps.get(ayah, [])
-        all_segments.extend(segments)
-
+    all_segments = _flatten_segments(verse_timestamps, ayah_start, ayah_end)
     if not all_segments:
         return None
 
-    # Reference verse boundaries
     ref_start_ms = all_segments[0][1]
     ref_end_ms = all_segments[-1][2]
     ref_duration_ms = ref_end_ms - ref_start_ms
@@ -462,15 +483,16 @@ def build_proportional_chunk_timings(verse_timestamps, ayah_start, ayah_end,
     if ref_duration_ms <= 0:
         return None
 
-    # Scale factor: actual audio duration / reference verse duration
     scale = actual_duration / (ref_duration_ms / 1000.0)
 
-    # Group into chunks and scale proportionally
+    chunk_ranges = _map_chunks_to_segments(
+        num_text_words, len(all_segments), words_per_chunk
+    )
+
     timings = []
-    for i in range(0, len(all_segments), words_per_chunk):
-        group = all_segments[i:i + words_per_chunk]
-        chunk_start_s = ((group[0][1] - ref_start_ms) / 1000.0) * scale
-        chunk_end_s = ((group[-1][2] - ref_start_ms) / 1000.0) * scale
+    for seg_start, seg_end in chunk_ranges:
+        chunk_start_s = ((all_segments[seg_start][1] - ref_start_ms) / 1000.0) * scale
+        chunk_end_s = ((all_segments[seg_end - 1][2] - ref_start_ms) / 1000.0) * scale
         timings.append((chunk_start_s, chunk_end_s))
 
     return timings
@@ -717,20 +739,16 @@ def process_verse(verse, index, total):
 
         # 7. Split text into chunks and build timings
         chunks = split_into_chunks(arabic)
+        num_text_words = len(arabic.split())
 
         if use_qurancom_audio and verse_timestamps:
             chunk_timings = build_chunk_timings(
-                verse_timestamps, ayah, ayah_end, clip_start_ms
+                verse_timestamps, ayah, ayah_end, clip_start_ms, num_text_words
             )
         elif proportional_timestamps:
             chunk_timings = build_proportional_chunk_timings(
-                proportional_timestamps, ayah, ayah_end, audio_duration
+                proportional_timestamps, ayah, ayah_end, audio_duration, num_text_words
             )
-
-        if chunk_timings and len(chunk_timings) != len(chunks):
-            log(f"  Chunk count mismatch: {len(chunks)} text chunks vs "
-                f"{len(chunk_timings)} timing chunks — falling back to equal division")
-            chunk_timings = None
 
         if chunk_timings:
             timing_type = "word-level" if use_qurancom_audio else "proportional"
