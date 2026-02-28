@@ -2,7 +2,7 @@
 
 Generates vertical videos (1080×1920) of Quran verses — Arabic text over scenic backgrounds with recitation audio. Built for Instagram Reels, TikTok, and YouTube Shorts.
 
-The text appears in sync with the recitation: roughly five words at a time, centered on screen, timed to match when each word group is actually spoken. For four of the five reciters, timing comes from word-level timestamps via the Quran.com API. Arabic only, no English translation.
+The text appears in sync with the recitation: one or two words at a time, centered on screen, timed to match when each word is actually spoken. Timing comes from word-level timestamps via the Quran.com API for all five reciters. Arabic only, no English translation.
 
 ## Project structure
 
