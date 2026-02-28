@@ -2,7 +2,7 @@
 
 Generates vertical videos (1080×1920) of Quran verses — Arabic text over scenic backgrounds with recitation audio. Built for Instagram Reels, TikTok, and YouTube Shorts.
 
-The text appears in sync with the recitation: roughly five words at a time, centered on screen, then the next group, and so on until the verse ends. Arabic only, no English translation.
+The text appears in sync with the recitation: roughly five words at a time, centered on screen, timed to match when each word group is actually spoken. For four of the five reciters, timing comes from word-level timestamps via the Quran.com API. Arabic only, no English translation.
 
 ## Project structure
 
@@ -76,15 +76,15 @@ The file contains **1,282 passage entries covering all 6,236 verses** of the Qur
 
 Major surahs have curated thematic breakpoints. Short surahs (≤15 ayahs) are kept whole. At one video per day, this is roughly **3.5 years of content**.
 
-Five reciters are distributed evenly across entries:
+Five reciters are distributed evenly across entries. Four have word-level timing from Quran.com; Muhammad Ayyub falls back to equal-division timing.
 
-| Reciter | API ID |
-|---|---|
-| Mishary Rashid al-Afasy | `ar.alafasy` |
-| Mahmoud Khaleel al-Husary | `ar.husary` |
-| Muhammad Siddiq al-Minshawi | `ar.minshawi` |
-| Muhammad Ayyub | `ar.muhammadayyoub` |
-| Abdul Rahman As-Sudais | `ar.abdurrahmaansudais` |
+| Reciter | AlQuran Cloud ID | Quran.com ID |
+|---|---|---|
+| Mishary Rashid al-Afasy | `ar.alafasy` | 7 |
+| Mahmoud Khaleel al-Husary | `ar.husary` | 6 |
+| Muhammad Siddiq al-Minshawi | `ar.minshawi` | 9 |
+| Muhammad Ayyub | `ar.muhammadayyoub` | N/A |
+| Abdul Rahman As-Sudais | `ar.abdurrahmaansudais` | 3 |
 
 Each entry looks like this:
 
@@ -126,7 +126,8 @@ For scenery queries, stick to nature terms and add "aerial", "drone", "timelapse
 
 ## Where the data comes from
 
-- Verse text and audio: [AlQuran Cloud API](https://alquran.cloud/api) — `quran-uthmani` edition with full tashkeel
+- Verse text: [AlQuran Cloud API](https://alquran.cloud/api) — `quran-uthmani` edition with full tashkeel
+- Recitation audio + word-level timing: [Quran.com API v4](https://api-docs.quran.com/) — chapter recitations with per-word timestamps. Falls back to AlQuran Cloud per-ayah audio when unavailable.
 - Background clips: [Pexels Videos API](https://www.pexels.com/api/)
 
 No Quranic content is hardcoded or AI-generated. All text and audio is fetched from authenticated sources at runtime.
