@@ -2,7 +2,7 @@
 
 Generates vertical videos (1080×1920) of Quran verses — Arabic text over scenic backgrounds with recitation audio. Built for Instagram Reels, TikTok, and YouTube Shorts.
 
-The text appears in sync with the recitation: one or two words at a time, centered on screen, timed to match when each word is actually spoken. Timing comes from word-level timestamps via the Quran.com API for all five reciters. Arabic only, no English translation.
+The text appears in sync with the recitation: one or two words at a time, centered on screen. Timing is derived from Quran.com word-level timestamps scaled proportionally to the actual audio duration. Arabic only, no English translation.
 
 ## Project structure
 
@@ -127,7 +127,8 @@ For scenery queries, stick to nature terms and add "aerial", "drone", "timelapse
 ## Where the data comes from
 
 - Verse text: [AlQuran Cloud API](https://alquran.cloud/api) — `quran-uthmani` edition with full tashkeel
-- Recitation audio + word-level timing: [Quran.com API v4](https://api-docs.quran.com/) — chapter recitations with per-word timestamps. Falls back to AlQuran Cloud per-ayah audio when unavailable.
+- Recitation audio: [AlQuran Cloud API](https://alquran.cloud/api) — per-ayah MP3s, concatenated for multi-ayah passages
+- Chunk timing reference: [Quran.com API v4](https://api-docs.quran.com/) — word-level timestamps scaled proportionally to the actual audio duration
 - Background clips: [Pexels Videos API](https://www.pexels.com/api/)
 
 No Quranic content is hardcoded or AI-generated. All text and audio is fetched from authenticated sources at runtime.
