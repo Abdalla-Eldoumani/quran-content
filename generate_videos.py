@@ -301,61 +301,6 @@ def fetch_word_segments(surah, ayah_start, ayah_end, reciter):
         return None, None
 
 
-def fetch_chapter_audio_clip(chapter_audio_url, verse_timestamps, ayah_start, ayah_end, dest):
-    """Download chapter audio from Quran.com and extract the verse range clip.
-
-    Uses the first segment of ayah_start and last segment of ayah_end to
-    determine the clip boundaries. Returns the actual clip duration in seconds.
-    """
-    # Determine clip boundaries from timestamps
-    first_segments = verse_timestamps[ayah_start]
-    last_segments = verse_timestamps[ayah_end]
-    clip_start_ms = first_segments[0][1]  # start of first word
-    clip_end_ms = last_segments[-1][2]    # end of last word
-
-    clip_start_s = clip_start_ms / 1000.0
-    clip_duration_s = (clip_end_ms - clip_start_ms) / 1000.0
-
-    log(f"    Chapter audio clip: {clip_start_s:.2f}s to {clip_end_ms / 1000.0:.2f}s "
-        f"(duration {clip_duration_s:.2f}s)")
-
-    tmpdir = tempfile.mkdtemp(prefix="quran_chapter_")
-    chapter_path = os.path.join(tmpdir, "chapter.mp3")
-
-    try:
-        # Stream download (chapter files can be large, e.g. Al-Baqarah ~120MB)
-        resp = requests.get(chapter_audio_url, timeout=300, stream=True)
-        resp.raise_for_status()
-        with open(chapter_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-        chapter_size = os.path.getsize(chapter_path)
-        log(f"    Downloaded chapter audio: {chapter_size / (1024 * 1024):.1f} MB")
-
-        # Extract clip with ffmpeg — re-encode for frame-accurate seeking.
-        # Using -c copy would seek to the nearest keyframe, which can be
-        # several seconds off and desync the word-level timestamps.
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-ss", f"{clip_start_s:.3f}",
-                "-i", chapter_path,
-                "-t", f"{clip_duration_s:.3f}",
-                dest,
-            ],
-            check=True, capture_output=True, text=True,
-        )
-
-        # Get actual clip duration from ffprobe (may differ slightly from calculated)
-        actual_duration = get_audio_duration(dest)
-        log(f"    Extracted clip duration: {actual_duration:.2f}s")
-        return actual_duration, clip_start_ms
-
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
 # ── Arabic text processing ───────────────────────────────────────────────────
 
 _reshaper = arabic_reshaper.ArabicReshaper(configuration=RESHAPER_CONFIG)
@@ -434,32 +379,6 @@ def _map_chunks_to_segments(num_text_words, num_segments, words_per_chunk):
         seg_end = max(seg_start + 1, min(seg_end, num_segments))
         ranges.append((seg_start, seg_end))
     return ranges
-
-
-def build_chunk_timings(verse_timestamps, ayah_start, ayah_end, clip_start_ms,
-                        num_text_words, words_per_chunk=WORDS_PER_CHUNK):
-    """Build per-chunk (start_s, end_s) timings from word-level segments.
-
-    Uses proportional mapping between text words and API segments so that
-    different word counts between AlQuran Cloud and Quran.com don't cause
-    a fallback to equal-division timing.
-    Returns a list of (start_s, end_s) tuples, or None on failure.
-    """
-    all_segments = _flatten_segments(verse_timestamps, ayah_start, ayah_end)
-    if not all_segments:
-        return None
-
-    chunk_ranges = _map_chunks_to_segments(
-        num_text_words, len(all_segments), words_per_chunk
-    )
-
-    timings = []
-    for seg_start, seg_end in chunk_ranges:
-        chunk_start_s = (all_segments[seg_start][1] - clip_start_ms) / 1000.0
-        chunk_end_s = (all_segments[seg_end - 1][2] - clip_start_ms) / 1000.0
-        timings.append((chunk_start_s, chunk_end_s))
-
-    return timings
 
 
 def build_proportional_chunk_timings(verse_timestamps, ayah_start, ayah_end,
@@ -671,53 +590,35 @@ def process_verse(verse, index, total):
         arabic, surah_name, surah_name_ar = fetch_verse_text(surah, ayah, ayah_end)
         time.sleep(API_SLEEP_S)
 
-        # 2. Try word-level timing from Quran.com
+        # 2. Fetch word segments from Quran.com (for timing reference only)
         chunk_timings = None
-        use_qurancom_audio = False
-        proportional_timestamps = None
+        verse_timestamps = None
 
         log("  Fetching word-level segments from Quran.com...")
-        chapter_audio_url, verse_timestamps = fetch_word_segments(
-            surah, ayah, ayah_end, reciter
-        )
-
-        if chapter_audio_url and verse_timestamps:
-            try:
-                clip_duration, clip_start_ms = fetch_chapter_audio_clip(
-                    chapter_audio_url, verse_timestamps, ayah, ayah_end, audio_path
-                )
-                audio_duration = clip_duration
-                use_qurancom_audio = True
-                log("  Using Quran.com chapter audio with word-level timing")
-            except Exception as e:
-                log(f"  Chapter audio clip failed: {e}")
-                proportional_timestamps = verse_timestamps
-                log("  Will use proportional timing as fallback")
+        _, ts = fetch_word_segments(surah, ayah, ayah_end, reciter)
+        if ts:
+            verse_timestamps = ts
         elif reciter not in QURANCOM_RECITER_IDS:
-            # Unmapped reciter — fetch reference timing from fallback
             time.sleep(API_SLEEP_S)
             log(f"  Fetching reference timing from {FALLBACK_RECITER}...")
             _, ref_ts = fetch_word_segments(surah, ayah, ayah_end, FALLBACK_RECITER)
             if ref_ts:
-                proportional_timestamps = ref_ts
+                verse_timestamps = ref_ts
                 log("  Got reference timestamps for proportional timing")
             else:
-                log("  Reference timing unavailable, using equal-division timing")
-        else:
-            log("  Word segments unavailable, using equal-division timing")
+                log("  No timestamps available, using equal-division timing")
 
-        # 3. Fall back to AlQuran Cloud per-ayah audio if needed
-        if not use_qurancom_audio:
-            log(f"  Fetching recitation audio ({reciter})...")
-            try:
-                fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
-            except Exception as e:
-                if reciter != FALLBACK_RECITER:
-                    log(f"  Audio failed with {reciter}: {e}")
-                    log(f"  Retrying with fallback reciter: {FALLBACK_RECITER}")
-                    fetch_audio(surah, ayah, ayah_end, FALLBACK_RECITER, audio_path)
-                else:
-                    raise
+        # 3. Fetch audio from AlQuran Cloud (with fallback reciter)
+        log(f"  Fetching recitation audio ({reciter})...")
+        try:
+            fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
+        except Exception as e:
+            if reciter != FALLBACK_RECITER:
+                log(f"  Audio failed with {reciter}: {e}")
+                log(f"  Retrying with fallback reciter: {FALLBACK_RECITER}")
+                fetch_audio(surah, ayah, ayah_end, FALLBACK_RECITER, audio_path)
+            else:
+                raise
 
         # 4. Verify audio
         audio_size = os.path.getsize(audio_path)
@@ -725,9 +626,8 @@ def process_verse(verse, index, total):
         if audio_size == 0:
             raise RuntimeError("Audio file is empty")
 
-        # 5. Audio duration (already set if using Quran.com audio)
-        if not use_qurancom_audio:
-            audio_duration = get_audio_duration(audio_path)
+        # 5. Audio duration
+        audio_duration = get_audio_duration(audio_path)
         video_duration = audio_duration + EXTRA_DURATION_S
         log(f"  Audio duration: {audio_duration:.1f}s -> Video: {video_duration:.1f}s")
         time.sleep(API_SLEEP_S)
@@ -739,20 +639,15 @@ def process_verse(verse, index, total):
 
         # 7. Split text into chunks and build timings
         chunks = split_into_chunks(arabic)
-        num_text_words = len(arabic.split())
 
-        if use_qurancom_audio and verse_timestamps:
-            chunk_timings = build_chunk_timings(
-                verse_timestamps, ayah, ayah_end, clip_start_ms, num_text_words
-            )
-        elif proportional_timestamps:
+        if verse_timestamps:
+            num_text_words = len(arabic.split())
             chunk_timings = build_proportional_chunk_timings(
-                proportional_timestamps, ayah, ayah_end, audio_duration, num_text_words
+                verse_timestamps, ayah, ayah_end, audio_duration, num_text_words
             )
 
         if chunk_timings:
-            timing_type = "word-level" if use_qurancom_audio else "proportional"
-            log(f"  Rendering {len(chunks)} chunk overlays with {timing_type} timing...")
+            log(f"  Rendering {len(chunks)} chunk overlays with proportional timing...")
         else:
             log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
 
