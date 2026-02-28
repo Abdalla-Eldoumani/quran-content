@@ -56,6 +56,15 @@ WORDS_PER_CHUNK = 5
 FALLBACK_RECITER = "ar.alafasy"
 FALLBACK_SCENERY = "ocean waves aerial"
 
+QURANCOM_API_BASE = "https://api.quran.com/api/v4"
+QURANCOM_RECITER_IDS = {
+    "ar.alafasy": 7,
+    "ar.husary": 6,
+    "ar.minshawi": 9,
+    "ar.abdurrahmaansudais": 3,
+}
+CHUNK_ANTICIPATION_S = 0.150  # show text 150ms before reciter speaks
+
 # Arabic reshaper config: preserve tashkeel/harakat
 RESHAPER_CONFIG = {
     "delete_harakat": False,
@@ -244,6 +253,108 @@ def fetch_background_video(query, dest):
             f.write(chunk)
 
 
+def fetch_word_segments(surah, ayah_start, ayah_end, reciter):
+    """Fetch word-level timing segments from Quran.com API.
+
+    Returns (chapter_audio_url, verse_timestamps) where verse_timestamps is a
+    dict mapping ayah number to a list of [word_index, start_ms, end_ms] segments.
+    Returns (None, None) if the reciter is not mapped or any request fails.
+    """
+    reciter_id = QURANCOM_RECITER_IDS.get(reciter)
+    if reciter_id is None:
+        log(f"    Reciter {reciter} not mapped on Quran.com, skipping word-level timing")
+        return None, None
+
+    try:
+        url = f"{QURANCOM_API_BASE}/chapter_recitations/{reciter_id}/{surah}"
+        resp = requests.get(url, params={"segments": "true"}, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        audio_file = data.get("audio_file", {})
+        chapter_audio_url = audio_file.get("audio_url")
+        if not chapter_audio_url:
+            log("    No chapter audio URL in Quran.com response")
+            return None, None
+
+        timestamps = audio_file.get("timestamps", {})
+
+        # Extract timestamps for only the requested ayah range
+        verse_timestamps = {}
+        for ayah in range(ayah_start, ayah_end + 1):
+            key = str(ayah)
+            if key not in timestamps:
+                log(f"    Missing timestamps for ayah {ayah} in Quran.com response")
+                return None, None
+            # Filter out malformed segments (keep only entries with exactly 3 elements)
+            segments = [s for s in timestamps[key] if isinstance(s, list) and len(s) == 3]
+            if not segments:
+                log(f"    No valid segments for ayah {ayah} after filtering")
+                return None, None
+            verse_timestamps[ayah] = segments
+
+        log(f"    Quran.com: got word segments for {len(verse_timestamps)} ayah(s)")
+        return chapter_audio_url, verse_timestamps
+
+    except Exception as e:
+        log(f"    Quran.com API error: {e}")
+        return None, None
+
+
+def fetch_chapter_audio_clip(chapter_audio_url, verse_timestamps, ayah_start, ayah_end, dest):
+    """Download chapter audio from Quran.com and extract the verse range clip.
+
+    Uses the first segment of ayah_start and last segment of ayah_end to
+    determine the clip boundaries. Returns the actual clip duration in seconds.
+    """
+    # Determine clip boundaries from timestamps
+    first_segments = verse_timestamps[ayah_start]
+    last_segments = verse_timestamps[ayah_end]
+    clip_start_ms = first_segments[0][1]  # start of first word
+    clip_end_ms = last_segments[-1][2]    # end of last word
+
+    clip_start_s = clip_start_ms / 1000.0
+    clip_duration_s = (clip_end_ms - clip_start_ms) / 1000.0
+
+    log(f"    Chapter audio clip: {clip_start_s:.2f}s to {clip_end_ms / 1000.0:.2f}s "
+        f"(duration {clip_duration_s:.2f}s)")
+
+    tmpdir = tempfile.mkdtemp(prefix="quran_chapter_")
+    chapter_path = os.path.join(tmpdir, "chapter.mp3")
+
+    try:
+        # Stream download (chapter files can be large, e.g. Al-Baqarah ~120MB)
+        resp = requests.get(chapter_audio_url, timeout=300, stream=True)
+        resp.raise_for_status()
+        with open(chapter_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        chapter_size = os.path.getsize(chapter_path)
+        log(f"    Downloaded chapter audio: {chapter_size / (1024 * 1024):.1f} MB")
+
+        # Extract clip with ffmpeg using stream copy (fast, no re-encoding)
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", f"{clip_start_s:.3f}",
+                "-i", chapter_path,
+                "-t", f"{clip_duration_s:.3f}",
+                "-c", "copy",
+                dest,
+            ],
+            check=True, capture_output=True, text=True,
+        )
+
+        # Get actual clip duration from ffprobe (may differ slightly from calculated)
+        actual_duration = get_audio_duration(dest)
+        log(f"    Extracted clip duration: {actual_duration:.2f}s")
+        return actual_duration, clip_start_ms
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ── Arabic text processing ───────────────────────────────────────────────────
 
 _reshaper = arabic_reshaper.ArabicReshaper(configuration=RESHAPER_CONFIG)
@@ -293,6 +404,36 @@ def split_into_chunks(text, words_per_chunk=WORDS_PER_CHUNK):
     for i in range(0, len(words), words_per_chunk):
         chunks.append(" ".join(words[i:i + words_per_chunk]))
     return chunks
+
+
+def build_chunk_timings(verse_timestamps, ayah_start, ayah_end, clip_start_ms,
+                        words_per_chunk=WORDS_PER_CHUNK):
+    """Build per-chunk (start_s, end_s) timings from word-level segments.
+
+    Flattens all word segments across ayahs into one ordered list, converts
+    from absolute chapter milliseconds to clip-relative seconds, then groups
+    into chunks of words_per_chunk matching how split_into_chunks groups text.
+    Returns a list of (start_s, end_s) tuples, or None on failure.
+    """
+    # Flatten all segments in ayah order
+    all_segments = []
+    for ayah in range(ayah_start, ayah_end + 1):
+        segments = verse_timestamps.get(ayah, [])
+        all_segments.extend(segments)
+
+    if not all_segments:
+        return None
+
+    # Group into chunks of words_per_chunk
+    timings = []
+    for i in range(0, len(all_segments), words_per_chunk):
+        group = all_segments[i:i + words_per_chunk]
+        # Convert from absolute chapter ms to clip-relative seconds
+        chunk_start_s = (group[0][1] - clip_start_ms) / 1000.0
+        chunk_end_s = (group[-1][2] - clip_start_ms) / 1000.0
+        timings.append((chunk_start_s, chunk_end_s))
+
+    return timings
 
 
 # ── Overlay rendering ────────────────────────────────────────────────────────
@@ -376,15 +517,16 @@ def render_chunk_overlay(chunk_text, surah_name, surah_name_ar, surah, ayah, aya
 
 # ── Video composition ────────────────────────────────────────────────────────
 
-def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration):
+def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
+                   chunk_timings=None):
     """
     Compose final video with timed chunk overlays.
 
-    Each chunk overlay is shown for an equal slice of the audio duration,
-    starting after the initial 1.5s silence.
+    When chunk_timings is provided (list of (start_s, end_s) tuples from word-level
+    timestamps), each overlay is shown at its real recitation time. Otherwise falls
+    back to equal-division timing.
     """
     num_chunks = len(chunk_paths)
-    chunk_dur = audio_duration / num_chunks
 
     # Build input list: bg, chunk PNGs, audio
     inputs = ["-stream_loop", "-1", "-i", bg_path]
@@ -401,8 +543,14 @@ def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration,
 
     prev = "bg"
     for i in range(num_chunks):
-        start = AUDIO_DELAY_S + i * chunk_dur
-        end = AUDIO_DELAY_S + (i + 1) * chunk_dur
+        if chunk_timings is not None:
+            raw_start, raw_end = chunk_timings[i]
+            start = max(0.0, AUDIO_DELAY_S + raw_start - CHUNK_ANTICIPATION_S)
+            end = AUDIO_DELAY_S + raw_end
+        else:
+            chunk_dur = audio_duration / num_chunks
+            start = AUDIO_DELAY_S + i * chunk_dur
+            end = AUDIO_DELAY_S + (i + 1) * chunk_dur
         out = f"v{i}"
         filters.append(
             f"[{prev}][{i + 1}:v]overlay=0:0:format=auto:"
@@ -461,51 +609,91 @@ def process_verse(verse, index, total):
         arabic, surah_name, surah_name_ar = fetch_verse_text(surah, ayah, ayah_end)
         time.sleep(API_SLEEP_S)
 
-        # 2. Fetch audio (with fallback reciter)
-        log(f"  Fetching recitation audio ({reciter})...")
-        try:
-            fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
-        except Exception as e:
-            if reciter != FALLBACK_RECITER:
-                log(f"  Audio failed with {reciter}: {e}")
-                log(f"  Retrying with fallback reciter: {FALLBACK_RECITER}")
-                fetch_audio(surah, ayah, ayah_end, FALLBACK_RECITER, audio_path)
-            else:
-                raise
+        # 2. Try word-level timing from Quran.com
+        chunk_timings = None
+        use_qurancom_audio = False
 
-        # 3. Verify audio
+        log("  Fetching word-level segments from Quran.com...")
+        chapter_audio_url, verse_timestamps = fetch_word_segments(
+            surah, ayah, ayah_end, reciter
+        )
+
+        if chapter_audio_url and verse_timestamps:
+            try:
+                clip_duration, clip_start_ms = fetch_chapter_audio_clip(
+                    chapter_audio_url, verse_timestamps, ayah, ayah_end, audio_path
+                )
+                audio_duration = clip_duration
+                use_qurancom_audio = True
+                log("  Using Quran.com chapter audio with word-level timing")
+            except Exception as e:
+                log(f"  Chapter audio clip failed: {e}")
+                log("  Falling back to AlQuran Cloud audio + equal division")
+        else:
+            log("  Word segments unavailable, using equal-division timing")
+
+        # 3. Fall back to AlQuran Cloud per-ayah audio if needed
+        if not use_qurancom_audio:
+            log(f"  Fetching recitation audio ({reciter})...")
+            try:
+                fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
+            except Exception as e:
+                if reciter != FALLBACK_RECITER:
+                    log(f"  Audio failed with {reciter}: {e}")
+                    log(f"  Retrying with fallback reciter: {FALLBACK_RECITER}")
+                    fetch_audio(surah, ayah, ayah_end, FALLBACK_RECITER, audio_path)
+                else:
+                    raise
+
+        # 4. Verify audio
         audio_size = os.path.getsize(audio_path)
         log(f"  Audio file size: {audio_size} bytes")
         if audio_size == 0:
             raise RuntimeError("Audio file is empty")
 
-        # 4. Audio duration
-        audio_duration = get_audio_duration(audio_path)
+        # 5. Audio duration (already set if using Quran.com audio)
+        if not use_qurancom_audio:
+            audio_duration = get_audio_duration(audio_path)
         video_duration = audio_duration + EXTRA_DURATION_S
         log(f"  Audio duration: {audio_duration:.1f}s -> Video: {video_duration:.1f}s")
         time.sleep(API_SLEEP_S)
 
-        # 5. Fetch background video
+        # 6. Fetch background video
         log("  Fetching background video from Pexels...")
         fetch_background_video(query, bg_path)
         time.sleep(API_SLEEP_S)
 
-        # 6. Split text into chunks and render overlays
+        # 7. Split text into chunks and build timings
         chunks = split_into_chunks(arabic)
-        log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
+
+        if use_qurancom_audio and verse_timestamps:
+            chunk_timings = build_chunk_timings(
+                verse_timestamps, ayah, ayah_end, clip_start_ms
+            )
+            if chunk_timings and len(chunk_timings) != len(chunks):
+                log(f"  Chunk count mismatch: {len(chunks)} text chunks vs "
+                    f"{len(chunk_timings)} timing chunks — falling back to equal division")
+                chunk_timings = None
+
+        if chunk_timings:
+            log(f"  Rendering {len(chunks)} chunk overlays with word-level timing...")
+        else:
+            log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
+
         chunk_paths = []
         for ci, chunk in enumerate(chunks):
             chunk_dest = os.path.join(tmpdir, f"chunk_{ci:02d}.png")
             render_chunk_overlay(chunk, surah_name, surah_name_ar, surah, ayah, ayah_end, chunk_dest)
             chunk_paths.append(chunk_dest)
 
-        # 7. Compose final video
+        # 8. Compose final video
         output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
         output_path = os.path.join(OUTPUT_DIR, output_filename)
         log("  Composing final video with FFmpeg...")
-        compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration)
+        compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
+                      chunk_timings=chunk_timings)
 
-        # 8. Verify audio in output
+        # 9. Verify audio in output
         verify_video_has_audio(output_path)
 
         log(f"  Done -> {output_filename}")
