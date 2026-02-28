@@ -254,7 +254,8 @@ To monitor ongoing runs:
 |---|---|---|---|
 | GitHub Actions | 2,000 min/month | ~150 min/month | $0 |
 | Pexels API | 200 req/hour | ~5 req/day | $0 |
-| AlQuran Cloud API | Unlimited | ~10 req/day | $0 |
+| AlQuran Cloud API | Unlimited | ~5 req/day | $0 |
+| Quran.com API | Unlimited | ~1 req/day | $0 |
 | Meta Graph API | Unlimited | 1 post/day | $0 |
 | YouTube Data API | 10,000 units/day | ~1,600 units/day | $0 |
 | **Total** | | | **$0** |
