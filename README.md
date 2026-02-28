@@ -76,7 +76,7 @@ The file contains **1,282 passage entries covering all 6,236 verses** of the Qur
 
 Major surahs have curated thematic breakpoints. Short surahs (≤15 ayahs) are kept whole. At one video per day, this is roughly **3.5 years of content**.
 
-Five reciters are distributed evenly across entries. Four have word-level timing from Quran.com; Muhammad Ayyub falls back to equal-division timing.
+Five reciters are distributed evenly across entries. Four have word-level timing from Quran.com; Muhammad Ayyub uses proportional timing scaled from al-Afasy's reference timestamps.
 
 | Reciter | AlQuran Cloud ID | Quran.com ID |
 |---|---|---|
