@@ -1,5 +1,270 @@
 {
   "next_index": 0,
-  "next_post_index": 0,
-  "history": []
+  "next_post_index": 23,
+  "history": [
+    {
+      "index": 0,
+      "date": "2026-03-09",
+      "video": "verse_001_17_80.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": false
+      },
+      "error": null
+    },
+    {
+      "index": 0,
+      "date": "2026-03-09",
+      "video": "verse_001_17_80.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 1,
+      "date": "2026-03-09",
+      "video": "verse_001_2_255.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 2,
+      "date": "2026-03-09",
+      "video": "verse_002_2_256.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 3,
+      "date": "2026-03-09",
+      "video": "verse_003_2_286.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 4,
+      "date": "2026-03-09",
+      "video": "verse_004_2_152.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 5,
+      "date": "2026-03-09",
+      "video": "verse_005_2_186.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 6,
+      "date": "2026-03-09",
+      "video": "verse_006_2_216.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 7,
+      "date": "2026-03-09",
+      "video": "verse_007_3_26.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 8,
+      "date": "2026-03-09",
+      "video": "verse_008_3_139.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 9,
+      "date": "2026-03-09",
+      "video": "verse_009_3_173.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 10,
+      "date": "2026-03-09",
+      "video": "verse_010_3_185.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 11,
+      "date": "2026-03-09",
+      "video": "verse_011_5_32.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 12,
+      "date": "2026-03-09",
+      "video": "verse_012_6_59.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 13,
+      "date": "2026-03-09",
+      "video": "verse_013_6_162.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 14,
+      "date": "2026-03-09",
+      "video": "verse_014_7_56.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 15,
+      "date": "2026-03-09",
+      "video": "verse_015_9_51.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 16,
+      "date": "2026-03-09",
+      "video": "verse_016_10_62.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 17,
+      "date": "2026-03-09",
+      "video": "verse_017_12_86.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 18,
+      "date": "2026-03-09",
+      "video": "verse_018_12_87.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 19,
+      "date": "2026-03-09",
+      "video": "verse_019_13_28.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 20,
+      "date": "2026-03-09",
+      "video": "verse_020_14_7.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 21,
+      "date": "2026-03-09",
+      "video": "verse_021_16_97.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    },
+    {
+      "index": 22,
+      "date": "2026-03-09",
+      "video": "verse_022_17_23.mp4",
+      "platforms": {
+        "instagram": false,
+        "facebook": false,
+        "youtube": true
+      },
+      "error": null
+    }
+  ]
 }
