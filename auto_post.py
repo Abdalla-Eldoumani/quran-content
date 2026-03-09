@@ -293,6 +293,12 @@ def main():
         if not video_path:
             logger.error("No video found in output/. Run without --post-only first.")
             sys.exit(2)
+        # Check if this video was already posted
+        video_filename = os.path.basename(video_path)
+        posted_files = {h.get("video") for h in state.get("history", []) if h.get("video")}
+        if video_filename in posted_files:
+            logger.error(f"Video already posted: {video_filename}. Generate a new one first.")
+            sys.exit(0)
         logger.info(f"Using existing video: {video_path}")
     elif args.dry_run:
         logger.info("DRY RUN: Skipping video generation")
@@ -367,6 +373,7 @@ def main():
     state["history"].append({
         "index": index,
         "date": datetime.date.today().isoformat(),
+        "video": os.path.basename(video_path) if video_path else None,
         "platforms": results,
         "error": None,
     })
