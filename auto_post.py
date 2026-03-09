@@ -298,9 +298,12 @@ def main():
         if not video_path:
             logger.error("No video found in output/. Run without --post-only first.")
             sys.exit(2)
-        # Check if this video was already posted
+        # Check if this video was already successfully posted
         video_filename = os.path.basename(video_path)
-        posted_files = {h.get("video") for h in state.get("history", []) if h.get("video")}
+        posted_files = {
+            h.get("video") for h in state.get("history", [])
+            if h.get("video") and any(h.get("platforms", {}).values())
+        }
         if video_filename in posted_files:
             logger.error(f"Video already posted: {video_filename}. Generate a new one first.")
             sys.exit(0)
