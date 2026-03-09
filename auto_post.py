@@ -269,10 +269,98 @@ def find_last_video():
     return os.path.join(OUTPUT_DIR, mp4s[0])
 
 
+def find_unposted_videos(state):
+    """Find all videos in OUTPUT_DIR that haven't been successfully posted, sorted by name."""
+    if not os.path.isdir(OUTPUT_DIR):
+        return []
+    posted_files = {
+        h.get("video") for h in state.get("history", [])
+        if h.get("video") and any(h.get("platforms", {}).values())
+    }
+    mp4s = [f for f in os.listdir(OUTPUT_DIR) if f.endswith(".mp4") and f not in posted_files]
+    mp4s.sort()
+    return [os.path.join(OUTPUT_DIR, f) for f in mp4s]
+
+
+def post_one_video(video_path, verse, state, total, platform=None, dry_run=False,
+                    advance_post_only=False):
+    """Post a single video to platforms. Updates state and saves it.
+
+    Returns True if at least one platform succeeded.
+    """
+    index = verse["_index"]  # 0-based index set by caller
+
+    caption = build_caption(verse)
+    yt_title = build_youtube_title(verse)
+    yt_desc = build_youtube_description(verse)
+    logger.info(f"Caption:\n{caption}")
+
+    results = {}
+    post_meta = platform is None or platform == "meta"
+    post_youtube = platform is None or platform == "youtube"
+
+    # Upload to temp host for Instagram (needs public URL)
+    video_url = None
+    if post_meta and not dry_run:
+        video_url = upload_to_temp_host(video_path)
+        if not video_url:
+            logger.warning("Could not upload to temp host — Instagram posting will fail")
+
+    if post_meta:
+        try:
+            if dry_run or video_url:
+                results["instagram"] = post_to_instagram(
+                    video_url or "https://example.com/dry-run.mp4", caption, dry_run=dry_run)
+            else:
+                logger.error("Instagram: No public video URL available")
+                results["instagram"] = False
+        except Exception as e:
+            logger.error(f"Instagram: {e}")
+            results["instagram"] = False
+
+    if post_meta:
+        try:
+            results["facebook"] = post_to_facebook(video_path, caption, dry_run=dry_run)
+        except Exception as e:
+            logger.error(f"Facebook: {e}")
+            results["facebook"] = False
+
+    if post_youtube:
+        try:
+            results["youtube"] = post_to_youtube(video_path, yt_title, yt_desc, dry_run=dry_run)
+        except Exception as e:
+            logger.error(f"YouTube: {e}")
+            results["youtube"] = False
+
+    # Update state
+    any_succeeded = any(results.values())
+    state["history"].append({
+        "index": index,
+        "date": datetime.date.today().isoformat(),
+        "video": os.path.basename(video_path),
+        "platforms": results,
+        "error": None,
+    })
+    state["history"] = state["history"][-100:]
+    if any_succeeded:
+        if advance_post_only:
+            state["next_post_index"] = (index + 1) % total
+        else:
+            state["next_index"] = (index + 1) % total
+            state["next_post_index"] = state["next_index"]
+    save_state(state)
+
+    # Summary
+    summary = ", ".join(f"{p}: {'OK' if s else 'FAILED'}" for p, s in results.items())
+    logger.info(f"Results: {summary}")
+    return any_succeeded
+
+
 def main():
     parser = argparse.ArgumentParser(description="Automated Quran video posting pipeline")
     parser.add_argument("--generate-only", action="store_true", help="Generate video only, don't post")
     parser.add_argument("--post-only", action="store_true", help="Post last generated video")
+    parser.add_argument("--post-all", action="store_true", help="Post all unposted videos in output/")
     parser.add_argument("--dry-run", action="store_true", help="Simulate everything")
     parser.add_argument("--platform", choices=["meta", "youtube"], help="Target specific platform")
     args = parser.parse_args()
@@ -286,11 +374,43 @@ def main():
     verses = load_verses()
     total = len(verses)
 
-    # Determine which verse to work with based on mode
+    # ── Post-all mode: post every unposted video in output/ ──
+    if args.post_all:
+        unposted = find_unposted_videos(state)
+        if not unposted:
+            logger.info("No unposted videos found in output/.")
+            sys.exit(0)
+        logger.info(f"Found {len(unposted)} unposted video(s)")
+
+        successes = 0
+        failures = 0
+        for i, video_path in enumerate(unposted, start=1):
+            post_index = state["next_post_index"] % total
+            verse = verses[post_index]
+            verse["_index"] = post_index
+            logger.info("")
+            logger.info(f"[{i}/{len(unposted)}] Posting: {verse['name']} ({_verse_ref(verse)})")
+            logger.info(f"  Video: {os.path.basename(video_path)}")
+
+            if post_one_video(video_path, verse, state, total,
+                              platform=args.platform, dry_run=args.dry_run,
+                              advance_post_only=True):
+                successes += 1
+            else:
+                failures += 1
+                logger.error("  Stopping — platform failure (fix credentials and retry)")
+                break
+
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info(f"Posted {successes}/{successes + failures} videos")
+        sys.exit(0 if successes > 0 else 1)
+
+    # ── Post-only mode: post the latest unposted video ──
     if args.post_only:
-        # Post-only uses the post cursor
         post_index = state["next_post_index"] % total
         verse = verses[post_index]
+        verse["_index"] = post_index
         logger.info(f"Post verse {post_index + 1}/{total}: {verse['name']} ({_verse_ref(verse)})")
         logger.info(f"Reciter: {verse['reciter']}")
 
@@ -298,7 +418,6 @@ def main():
         if not video_path:
             logger.error("No video found in output/. Run without --post-only first.")
             sys.exit(2)
-        # Check if this video was already successfully posted
         video_filename = os.path.basename(video_path)
         posted_files = {
             h.get("video") for h in state.get("history", [])
@@ -308,127 +427,52 @@ def main():
             logger.error(f"Video already posted: {video_filename}. Generate a new one first.")
             sys.exit(0)
         logger.info(f"Using existing video: {video_path}")
-        index = post_index
-    else:
-        # Generate (and optionally post) uses the generate cursor
-        index = state["next_index"] % total
-        verse = verses[index]
-        logger.info(f"Verse {index + 1}/{total}: {verse['name']} ({_verse_ref(verse)})")
-        logger.info(f"Reciter: {verse['reciter']}")
 
-        video_path = None
+        ok = post_one_video(video_path, verse, state, total,
+                            platform=args.platform, dry_run=args.dry_run,
+                            advance_post_only=True)
         if args.dry_run:
-            logger.info("DRY RUN: Skipping video generation")
-            video_path = find_last_video()
-        else:
-            logger.info("Generating video...")
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            try:
-                result = process_verse(verse, index + 1, total)
-                if result:
-                    video_path = result
-                    logger.info(f"Video generated: {video_path}")
-                else:
-                    logger.error("Video generation returned no path")
-                    sys.exit(2)
-            except Exception as e:
-                logger.error(f"Video generation failed: {e}")
-                sys.exit(2)
+            logger.info("DRY RUN complete.")
+        sys.exit(0 if ok or args.dry_run else 1)
 
-        if args.generate_only:
-            logger.info("--generate-only: Skipping posting")
-            state["next_index"] = (index + 1) % total
-            save_state(state)
-            logger.info(f"State updated: next_index={state['next_index']}")
-            sys.exit(0)
+    # ── Generate (and optionally post) mode ──
+    index = state["next_index"] % total
+    verse = verses[index]
+    verse["_index"] = index
+    logger.info(f"Verse {index + 1}/{total}: {verse['name']} ({_verse_ref(verse)})")
+    logger.info(f"Reciter: {verse['reciter']}")
 
-    # Build captions
-    caption = build_caption(verse)
-    yt_title = build_youtube_title(verse)
-    yt_desc = build_youtube_description(verse)
-    logger.info(f"Caption:\n{caption}")
-
-    # Post to platforms
-    results = {}
-    post_meta = args.platform is None or args.platform == "meta"
-    post_youtube = args.platform is None or args.platform == "youtube"
-
-    # Upload to temp host for Instagram (needs public URL)
-    video_url = None
-    if post_meta and video_path and not args.dry_run:
-        video_url = upload_to_temp_host(video_path)
-        if not video_url:
-            logger.warning("Could not upload to temp host — Instagram posting will fail")
-
-    if post_meta:
-        try:
-            if args.dry_run or video_url:
-                results["instagram"] = post_to_instagram(
-                    video_url or "https://example.com/dry-run.mp4", caption, dry_run=args.dry_run)
-            else:
-                logger.error("Instagram: No public video URL available")
-                results["instagram"] = False
-        except Exception as e:
-            logger.error(f"Instagram: {e}")
-            results["instagram"] = False
-
-    if post_meta and video_path:
-        try:
-            results["facebook"] = post_to_facebook(video_path, caption, dry_run=args.dry_run)
-        except Exception as e:
-            logger.error(f"Facebook: {e}")
-            results["facebook"] = False
-
-    if post_youtube and video_path:
-        try:
-            results["youtube"] = post_to_youtube(video_path, yt_title, yt_desc, dry_run=args.dry_run)
-        except Exception as e:
-            logger.error(f"YouTube: {e}")
-            results["youtube"] = False
-
-    # Update state
-    any_succeeded = any(results.values())
-    state["history"].append({
-        "index": index,
-        "date": datetime.date.today().isoformat(),
-        "video": os.path.basename(video_path) if video_path else None,
-        "platforms": results,
-        "error": None,
-    })
-    state["history"] = state["history"][-100:]
-    if any_succeeded:
-        if args.post_only:
-            state["next_post_index"] = (index + 1) % total
-        else:
-            # Full pipeline: advance both cursors together
-            state["next_index"] = (index + 1) % total
-            state["next_post_index"] = state["next_index"]
-    save_state(state)
-
-    # Summary
-    logger.info("")
-    logger.info("=" * 60)
-    summary = ", ".join(f"{p}: {'OK' if s else 'FAILED'}" for p, s in results.items())
-    logger.info(f"Results: {summary}")
-    if any_succeeded:
-        if args.post_only:
-            logger.info(f"State updated: next_post_index={state['next_post_index']}")
-        else:
-            logger.info(f"State updated: next_index={state['next_index']}")
+    video_path = None
+    if args.dry_run:
+        logger.info("DRY RUN: Skipping video generation")
+        video_path = find_last_video()
     else:
-        logger.info("All platforms failed — state unchanged (will retry this verse)")
+        logger.info("Generating video...")
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        try:
+            result = process_verse(verse, index + 1, total)
+            if result:
+                video_path = result
+                logger.info(f"Video generated: {video_path}")
+            else:
+                logger.error("Video generation returned no path")
+                sys.exit(2)
+        except Exception as e:
+            logger.error(f"Video generation failed: {e}")
+            sys.exit(2)
 
+    if args.generate_only:
+        logger.info("--generate-only: Skipping posting")
+        state["next_index"] = (index + 1) % total
+        save_state(state)
+        logger.info(f"State updated: next_index={state['next_index']}")
+        sys.exit(0)
+
+    ok = post_one_video(video_path, verse, state, total,
+                        platform=args.platform, dry_run=args.dry_run)
     if args.dry_run:
         logger.info("DRY RUN complete.")
-        sys.exit(0)
-    elif not results:
-        logger.info("No platforms were targeted.")
-        sys.exit(0)
-    elif any(results.values()):
-        sys.exit(0)
-    else:
-        logger.error("All platforms failed.")
-        sys.exit(1)
+    sys.exit(0 if ok or args.dry_run else 1)
 
 
 if __name__ == "__main__":
