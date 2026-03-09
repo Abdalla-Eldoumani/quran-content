@@ -370,6 +370,7 @@ def main():
             results["youtube"] = False
 
     # Update state
+    any_succeeded = any(results.values())
     state["history"].append({
         "index": index,
         "date": datetime.date.today().isoformat(),
@@ -378,7 +379,8 @@ def main():
         "error": None,
     })
     state["history"] = state["history"][-100:]
-    state["next_index"] = (index + 1) % total
+    if any_succeeded:
+        state["next_index"] = (index + 1) % total
     save_state(state)
 
     # Summary
@@ -386,7 +388,10 @@ def main():
     logger.info("=" * 60)
     summary = ", ".join(f"{p}: {'OK' if s else 'FAILED'}" for p, s in results.items())
     logger.info(f"Results: {summary}")
-    logger.info(f"State updated: next_index={state['next_index']}")
+    if any_succeeded:
+        logger.info(f"State updated: next_index={state['next_index']}")
+    else:
+        logger.info(f"All platforms failed — next_index stays at {state['next_index']} (will retry this verse)")
 
     if args.dry_run:
         logger.info("DRY RUN complete.")
