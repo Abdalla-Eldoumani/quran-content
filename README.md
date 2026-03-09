@@ -2,7 +2,7 @@
 
 Generates vertical videos (1080×1920) of Quran verses — Arabic text over scenic backgrounds with recitation audio. Built for Instagram Reels, TikTok, and YouTube Shorts.
 
-The text appears in sync with the recitation: one or two words at a time, centered on screen. Timing is derived from Quran.com word-level timestamps scaled proportionally to the actual audio duration. Arabic only, no English translation.
+The text appears in sync with the recitation: about five words at a time, centered on screen. Timing is extracted from the actual audio using Whisper (`faster-whisper`), with Quran.com proportional scaling as a fallback. Arabic only, no English translation.
 
 ## Project structure
 
@@ -34,12 +34,13 @@ quran-content/
 - **Pexels API key** — free at https://www.pexels.com/api/
 - Python packages:
   ```
-  pip install requests python-bidi arabic-reshaper Pillow
+  pip install requests python-bidi arabic-reshaper Pillow faster-whisper
   ```
   For automated posting, also install:
   ```
   pip install python-dotenv google-auth-oauthlib google-api-python-client
   ```
+- Optional: set `WHISPER_MODEL` env var to override model size (default: `large-v3`, use `small` for CI/testing)
 
 ## How to generate videos
 
@@ -59,7 +60,12 @@ quran-content/
    python generate_videos.py --verse 5
    ```
 
-4. Generate all verses:
+4. Generate without subtitles (background + audio only, no Whisper needed):
+   ```bash
+   python generate_videos.py --verse 5 --no-subtitles
+   ```
+
+5. Generate all verses:
    ```bash
    python generate_videos.py
    ```
@@ -76,7 +82,7 @@ The file contains **1,282 passage entries covering all 6,236 verses** of the Qur
 
 Major surahs have curated thematic breakpoints. Short surahs (≤15 ayahs) are kept whole. At one video per day, this is roughly **3.5 years of content**.
 
-Five reciters are distributed evenly across entries. Four have word-level timing from Quran.com; Muhammad Ayyub uses proportional timing scaled from al-Afasy's reference timestamps.
+Five reciters are distributed evenly across entries. All reciters get exact word-level timing via Whisper transcription of the actual audio. Quran.com timestamps (available for four reciters) serve as a fallback if Whisper fails.
 
 | Reciter | AlQuran Cloud ID | Quran.com ID |
 |---|---|---|
@@ -128,7 +134,8 @@ For scenery queries, stick to nature terms and add "aerial", "drone", "timelapse
 
 - Verse text: [AlQuran Cloud API](https://alquran.cloud/api) — `quran-uthmani` edition with full tashkeel
 - Recitation audio: [AlQuran Cloud API](https://alquran.cloud/api) — per-ayah MP3s, concatenated for multi-ayah passages
-- Chunk timing reference: [Quran.com API v4](https://api-docs.quran.com/) — word-level timestamps scaled proportionally to the actual audio duration
+- Word-level timing: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — extracts exact timestamps from the actual audio file
+- Fallback timing: [Quran.com API v4](https://api-docs.quran.com/) — word-level timestamps scaled proportionally (used if Whisper fails)
 - Background clips: [Pexels Videos API](https://www.pexels.com/api/)
 
 No Quranic content is hardcoded or AI-generated. All text and audio is fetched from authenticated sources at runtime.
