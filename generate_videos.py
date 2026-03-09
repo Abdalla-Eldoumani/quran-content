@@ -48,10 +48,12 @@ REFERENCE_FONT_SIZE = 30
 ALQURAN_API_BASE = "https://api.alquran.cloud/v1"
 PEXELS_API_BASE = "https://api.pexels.com"
 
-AUDIO_DELAY_S = 1.5
+AUDIO_DELAY_S = 1.5  # fallback delay when Whisper is unavailable
+MIN_AUDIO_DELAY_S = 0.3  # minimum visual buffer before first word
+WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "large-v3")
 EXTRA_DURATION_S = 3.0
 API_SLEEP_S = 2
-WORDS_PER_CHUNK = 2
+WORDS_PER_CHUNK = 5
 
 FALLBACK_RECITER = "ar.alafasy"
 FALLBACK_SCENERY = "ocean waves aerial"
@@ -381,6 +383,66 @@ def _map_chunks_to_segments(num_text_words, num_segments, words_per_chunk):
     return ranges
 
 
+_whisper_model = None
+
+
+def get_whisper_model():
+    """Lazy singleton for the Whisper model. Imports faster_whisper on first call."""
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        log(f"  Loading Whisper model ({WHISPER_MODEL_SIZE})...")
+        _whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+    return _whisper_model
+
+
+def transcribe_word_timestamps(audio_path):
+    """Extract word-level timestamps from audio using faster-whisper.
+
+    Returns (word_segments, speech_onset_s) where word_segments is a list of
+    (start_s, end_s) per word, and speech_onset_s is the start time of the first word.
+    Returns (None, None) on failure.
+    """
+    try:
+        model = get_whisper_model()
+        segments, _ = model.transcribe(
+            audio_path, language="ar", word_timestamps=True, vad_filter=True
+        )
+        word_segments = []
+        for segment in segments:
+            if segment.words:
+                for w in segment.words:
+                    word_segments.append((w.start, w.end))
+        if not word_segments:
+            log("  Whisper: no words detected in audio")
+            return None, None
+        speech_onset_s = word_segments[0][0]
+        log(f"  Whisper: {len(word_segments)} words detected, speech onset at {speech_onset_s:.3f}s")
+        return word_segments, speech_onset_s
+    except Exception as e:
+        log(f"  Whisper transcription failed: {e}")
+        return None, None
+
+
+def build_whisper_chunk_timings(whisper_segments, num_text_words,
+                                words_per_chunk=WORDS_PER_CHUNK):
+    """Build chunk timings from Whisper word-level timestamps.
+
+    Uses proportional index mapping to handle tokenization mismatches between
+    Whisper's detected words and the AlQuran Cloud text words.
+    Returns a list of (start_s, end_s) tuples per chunk.
+    """
+    chunk_ranges = _map_chunks_to_segments(
+        num_text_words, len(whisper_segments), words_per_chunk
+    )
+    timings = []
+    for seg_start, seg_end in chunk_ranges:
+        chunk_start_s = whisper_segments[seg_start][0]
+        chunk_end_s = whisper_segments[seg_end - 1][1]
+        timings.append((chunk_start_s, chunk_end_s))
+    return timings
+
+
 def build_proportional_chunk_timings(verse_timestamps, ayah_start, ayah_end,
                                      actual_duration, num_text_words,
                                      words_per_chunk=WORDS_PER_CHUNK):
@@ -498,15 +560,51 @@ def render_chunk_overlay(chunk_text, surah_name, surah_name_ar, surah, ayah, aya
 
 # ── Video composition ────────────────────────────────────────────────────────
 
-def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
-                   chunk_timings=None):
+def compose_video_no_subtitles(bg_path, audio_path, output_path, audio_duration, video_duration,
+                               audio_delay_s=None):
+    """Compose video with background + audio only, no text overlays."""
+    if audio_delay_s is None:
+        audio_delay_s = AUDIO_DELAY_S
+
+    delay_ms = int(audio_delay_s * 1000)
+    filter_str = (
+        "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,setsar=1[outv];"
+        f"[1:a]adelay={delay_ms}|{delay_ms},apad[outa]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-stream_loop", "-1", "-i", bg_path,
+        "-i", audio_path,
+        "-filter_complex", filter_str,
+        "-map", "[outv]",
+        "-map", "[outa]",
+        "-t", str(video_duration),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"  FFmpeg stderr: {result.stderr[-800:]}")
+        result.check_returncode()
+
+
+def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration, chunk_timings=None, audio_delay_s=None):
     """
     Compose final video with timed chunk overlays.
 
     When chunk_timings is provided (list of (start_s, end_s) tuples from word-level
     timestamps), each overlay is shown at its real recitation time. Otherwise falls
     back to equal-division timing.
+
+    audio_delay_s controls the silence before audio starts. Defaults to AUDIO_DELAY_S
+    if not provided (fallback for non-Whisper paths).
     """
+    if audio_delay_s is None:
+        audio_delay_s = AUDIO_DELAY_S
+
     num_chunks = len(chunk_paths)
 
     # Build input list: bg, chunk PNGs, audio
@@ -526,12 +624,12 @@ def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration,
     for i in range(num_chunks):
         if chunk_timings is not None:
             raw_start, raw_end = chunk_timings[i]
-            start = max(0.0, AUDIO_DELAY_S + raw_start - CHUNK_ANTICIPATION_S)
-            end = AUDIO_DELAY_S + raw_end
+            start = max(0.0, audio_delay_s + raw_start - CHUNK_ANTICIPATION_S)
+            end = audio_delay_s + raw_end
         else:
             chunk_dur = audio_duration / num_chunks
-            start = AUDIO_DELAY_S + i * chunk_dur
-            end = AUDIO_DELAY_S + (i + 1) * chunk_dur
+            start = audio_delay_s + i * chunk_dur
+            end = audio_delay_s + (i + 1) * chunk_dur
         out = f"v{i}"
         filters.append(
             f"[{prev}][{i + 1}:v]overlay=0:0:format=auto:"
@@ -539,8 +637,9 @@ def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration,
         )
         prev = out
 
+    delay_ms = int(audio_delay_s * 1000)
     filters.append(
-        f"[{audio_idx}:a]adelay={int(AUDIO_DELAY_S * 1000)}|{int(AUDIO_DELAY_S * 1000)},apad[outa]"
+        f"[{audio_idx}:a]adelay={delay_ms}|{delay_ms},apad[outa]"
     )
 
     filter_str = ";".join(filters)
@@ -564,7 +663,7 @@ def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration,
 
 # ── Per-verse pipeline ───────────────────────────────────────────────────────
 
-def process_verse(verse, index, total):
+def process_verse(verse, index, total, subtitles=True):
     """Process a single verse: fetch data, render chunk overlays, compose video."""
     surah = verse["surah"]
     ayah = verse["ayah"]
@@ -590,25 +689,7 @@ def process_verse(verse, index, total):
         arabic, surah_name, surah_name_ar = fetch_verse_text(surah, ayah, ayah_end)
         time.sleep(API_SLEEP_S)
 
-        # 2. Fetch word segments from Quran.com (for timing reference only)
-        chunk_timings = None
-        verse_timestamps = None
-
-        log("  Fetching word-level segments from Quran.com...")
-        _, ts = fetch_word_segments(surah, ayah, ayah_end, reciter)
-        if ts:
-            verse_timestamps = ts
-        elif reciter not in QURANCOM_RECITER_IDS:
-            time.sleep(API_SLEEP_S)
-            log(f"  Fetching reference timing from {FALLBACK_RECITER}...")
-            _, ref_ts = fetch_word_segments(surah, ayah, ayah_end, FALLBACK_RECITER)
-            if ref_ts:
-                verse_timestamps = ref_ts
-                log("  Got reference timestamps for proportional timing")
-            else:
-                log("  No timestamps available, using equal-division timing")
-
-        # 3. Fetch audio from AlQuran Cloud (with fallback reciter)
+        # 2. Fetch audio from AlQuran Cloud (with fallback reciter)
         log(f"  Fetching recitation audio ({reciter})...")
         try:
             fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
@@ -620,51 +701,98 @@ def process_verse(verse, index, total):
             else:
                 raise
 
-        # 4. Verify audio
+        # 3. Verify audio
         audio_size = os.path.getsize(audio_path)
         log(f"  Audio file size: {audio_size} bytes")
         if audio_size == 0:
             raise RuntimeError("Audio file is empty")
 
-        # 5. Audio duration
+        # 4. Audio duration
         audio_duration = get_audio_duration(audio_path)
-        video_duration = audio_duration + EXTRA_DURATION_S
-        log(f"  Audio duration: {audio_duration:.1f}s -> Video: {video_duration:.1f}s")
-        time.sleep(API_SLEEP_S)
+        log(f"  Audio duration: {audio_duration:.1f}s")
 
-        # 6. Fetch background video
+        # 5. Fetch background video
         log("  Fetching background video from Pexels...")
         fetch_background_video(query, bg_path)
         time.sleep(API_SLEEP_S)
 
-        # 7. Split text into chunks and build timings
-        chunks = split_into_chunks(arabic)
+        if not subtitles:
+            # ── No-subtitles path: background + audio only ──
+            audio_delay = MIN_AUDIO_DELAY_S
+            video_duration = audio_delay + audio_duration + EXTRA_DURATION_S
+            log(f"  No subtitles mode — video: {video_duration:.1f}s (delay: {audio_delay:.2f}s)")
 
-        if verse_timestamps:
-            num_text_words = len(arabic.split())
-            chunk_timings = build_proportional_chunk_timings(
-                verse_timestamps, ayah, ayah_end, audio_duration, num_text_words
-            )
-
-        if chunk_timings:
-            log(f"  Rendering {len(chunks)} chunk overlays with proportional timing...")
+            output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
+            output_path = os.path.join(OUTPUT_DIR, output_filename)
+            log("  Composing video (no subtitles) with FFmpeg...")
+            compose_video_no_subtitles(bg_path, audio_path, output_path, audio_duration,
+                                       video_duration, audio_delay_s=audio_delay)
         else:
-            log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
+            # ── Subtitles path: Whisper timing + text overlays ──
 
-        chunk_paths = []
-        for ci, chunk in enumerate(chunks):
-            chunk_dest = os.path.join(tmpdir, f"chunk_{ci:02d}.png")
-            render_chunk_overlay(chunk, surah_name, surah_name_ar, surah, ayah, ayah_end, chunk_dest)
-            chunk_paths.append(chunk_dest)
+            # 6. Fetch word segments from Quran.com (fallback timing reference)
+            chunk_timings = None
+            verse_timestamps = None
 
-        # 8. Compose final video
-        output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
-        output_path = os.path.join(OUTPUT_DIR, output_filename)
-        log("  Composing final video with FFmpeg...")
-        compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
-                      chunk_timings=chunk_timings)
+            log("  Fetching word-level segments from Quran.com...")
+            _, ts = fetch_word_segments(surah, ayah, ayah_end, reciter)
+            if ts:
+                verse_timestamps = ts
+            elif reciter not in QURANCOM_RECITER_IDS:
+                time.sleep(API_SLEEP_S)
+                log(f"  Fetching reference timing from {FALLBACK_RECITER}...")
+                _, ref_ts = fetch_word_segments(surah, ayah, ayah_end, FALLBACK_RECITER)
+                if ref_ts:
+                    verse_timestamps = ref_ts
+                    log("  Got reference timestamps for proportional timing")
+                else:
+                    log("  No timestamps available, using equal-division timing")
 
-        # 9. Verify audio in output
+            # 7. Whisper transcription for exact word-level timing
+            audio_delay = AUDIO_DELAY_S  # fallback
+            whisper_segments, speech_onset = transcribe_word_timestamps(audio_path)
+            if whisper_segments:
+                audio_delay = max(0.0, MIN_AUDIO_DELAY_S + CHUNK_ANTICIPATION_S - speech_onset)
+                log(f"  Dynamic audio delay: {audio_delay:.3f}s (speech onset: {speech_onset:.3f}s)")
+
+            video_duration = audio_delay + audio_duration + EXTRA_DURATION_S
+            log(f"  Video duration: {video_duration:.1f}s (delay: {audio_delay:.2f}s)")
+            time.sleep(API_SLEEP_S)
+
+            # 8. Split text into chunks and build timings
+            chunks = split_into_chunks(arabic)
+            num_text_words = len(arabic.split())
+
+            if whisper_segments:
+                chunk_timings = build_whisper_chunk_timings(
+                    whisper_segments, num_text_words
+                )
+                log(f"  Rendering {len(chunks)} chunk overlays with Whisper timing...")
+            elif verse_timestamps:
+                chunk_timings = build_proportional_chunk_timings(
+                    verse_timestamps, ayah, ayah_end, audio_duration, num_text_words
+                )
+                if chunk_timings:
+                    log(f"  Rendering {len(chunks)} chunk overlays with proportional timing...")
+                else:
+                    log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
+            else:
+                log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
+
+            chunk_paths = []
+            for ci, chunk in enumerate(chunks):
+                chunk_dest = os.path.join(tmpdir, f"chunk_{ci:02d}.png")
+                render_chunk_overlay(chunk, surah_name, surah_name_ar, surah, ayah, ayah_end, chunk_dest)
+                chunk_paths.append(chunk_dest)
+
+            # 9. Compose final video
+            output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
+            output_path = os.path.join(OUTPUT_DIR, output_filename)
+            log("  Composing final video with FFmpeg...")
+            compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
+                          chunk_timings=chunk_timings, audio_delay_s=audio_delay)
+
+        # 10. Verify audio in output
         verify_video_has_audio(output_path)
 
         log(f"  Done -> {output_filename}")
@@ -680,6 +808,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Quran verse videos")
     parser.add_argument("--test", action="store_true", help="Generate only the first verse")
     parser.add_argument("--verse", type=int, help="Generate only verse N (1-indexed)")
+    parser.add_argument("--no-subtitles", action="store_true",
+                        help="Generate video with background + audio only (no text overlays)")
     args = parser.parse_args()
 
     if not shutil.which("ffmpeg"):
@@ -692,10 +822,11 @@ def main():
         print("ERROR: PEXELS_API_KEY environment variable is not set.")
         print("Get a free API key at https://www.pexels.com/api/")
         sys.exit(1)
-    for font_path in (ARABIC_FONT_PATH, ENGLISH_FONT_PATH):
-        if not os.path.isfile(font_path):
-            print(f"ERROR: Font not found: {font_path}")
-            sys.exit(1)
+    if not args.no_subtitles:
+        for font_path in (ARABIC_FONT_PATH, ENGLISH_FONT_PATH):
+            if not os.path.isfile(font_path):
+                print(f"ERROR: Font not found: {font_path}")
+                sys.exit(1)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -717,9 +848,11 @@ def main():
     successes = 0
     failures = []
 
+    use_subtitles = not args.no_subtitles
+
     for i, verse in enumerate(verses, start=1):
         try:
-            if process_verse(verse, i, total):
+            if process_verse(verse, i, total, subtitles=use_subtitles):
                 successes += 1
         except Exception as e:
             name = verse.get("name", f"{verse['surah']}:{verse['ayah']}")
