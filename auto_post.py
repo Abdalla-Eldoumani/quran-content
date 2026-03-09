@@ -398,12 +398,10 @@ def main():
                 successes += 1
             else:
                 failures += 1
-                logger.error("  Stopping — platform failure (fix credentials and retry)")
-                break
 
         logger.info("")
         logger.info("=" * 60)
-        logger.info(f"Posted {successes}/{successes + failures} videos")
+        logger.info(f"Posted {successes}/{len(unposted)} videos ({failures} failed)")
         sys.exit(0 if successes > 0 else 1)
 
     # ── Post-only mode: post the latest unposted video ──

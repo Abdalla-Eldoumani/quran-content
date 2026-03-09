@@ -175,13 +175,15 @@ For detailed step-by-step instructions, see [docs/automation-setup.md](docs/auto
    ```bash
    python3 auto_post.py --dry-run          # Simulate everything
    python3 auto_post.py --generate-only    # Generate one video, don't post
+   python3 auto_post.py --post-only        # Post the latest generated video
+   python3 auto_post.py --post-all         # Post all unposted videos in output/
    python3 auto_post.py --platform meta    # Post to Meta only
    python3 auto_post.py --platform youtube # Post to YouTube only
    ```
 
 **YouTube note:** API projects created after July 2020 upload videos as private until you pass a compliance audit in Google Cloud Console (APIs & Services > YouTube Data API v3 > Compliance). Videos will upload but stay private until the audit passes.
 
-`state.json` tracks which verse is next. The workflow commits it back to the repo after each run, so the pipeline picks up where it left off.
+`state.json` tracks two cursors: `next_index` (which verse to generate next) and `next_post_index` (which verse to post next). This lets you batch-generate videos with `generate_videos.py`, then drip-post them with `--post-all`. The workflow commits state back to the repo after each run.
 
 ## Manual posting
 
