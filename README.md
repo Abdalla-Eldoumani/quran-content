@@ -65,13 +65,13 @@ quran-content/
    python generate_videos.py --verse 5 --no-subtitles
    ```
 
-5. Generate all verses:
+5. Generate all verses (resumes from where you left off):
    ```bash
    python generate_videos.py
    ```
-   Each verse needs multiple API calls and an FFmpeg render pass. Videos are saved as `output/verse_001_2_255.mp4`, etc.
+   The script reads `state.json` and picks up from the next ungenerated verse. After each successful video, it advances the counter so you can stop and restart at any time. Videos are saved as `output/verse_001_2_255.mp4`, etc.
 
-   With 1,282 entries in `verses.json`, generating everything takes a long time. Generate in batches or ranges as needed.
+   With 1,282 entries in `verses.json`, generating everything takes a long time. Stop with Ctrl+C whenever you want — progress is saved after each verse.
 
 ## About verses.json
 
