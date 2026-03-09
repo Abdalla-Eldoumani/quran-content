@@ -116,7 +116,7 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"next_index": 0, "history": []}
+    return {"next_index": 0, "next_post_index": 0, "history": []}
 
 
 def save_state(state):

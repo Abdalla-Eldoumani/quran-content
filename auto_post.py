@@ -62,8 +62,12 @@ def setup_logging():
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"next_index": 0, "history": []}
+            state = json.load(f)
+        # Ensure next_post_index exists (backward compat)
+        if "next_post_index" not in state:
+            state["next_post_index"] = state.get("next_index", 0)
+        return state
+    return {"next_index": 0, "next_post_index": 0, "history": []}
 
 
 def save_state(state):
@@ -281,14 +285,15 @@ def main():
     state = load_state()
     verses = load_verses()
     total = len(verses)
-    index = state["next_index"] % total
-    verse = verses[index]
-    logger.info(f"Verse {index + 1}/{total}: {verse['name']} ({_verse_ref(verse)})")
-    logger.info(f"Reciter: {verse['reciter']}")
 
-    # Generate or locate video
-    video_path = None
+    # Determine which verse to work with based on mode
     if args.post_only:
+        # Post-only uses the post cursor
+        post_index = state["next_post_index"] % total
+        verse = verses[post_index]
+        logger.info(f"Post verse {post_index + 1}/{total}: {verse['name']} ({_verse_ref(verse)})")
+        logger.info(f"Reciter: {verse['reciter']}")
+
         video_path = find_last_video()
         if not video_path:
             logger.error("No video found in output/. Run without --post-only first.")
@@ -300,30 +305,39 @@ def main():
             logger.error(f"Video already posted: {video_filename}. Generate a new one first.")
             sys.exit(0)
         logger.info(f"Using existing video: {video_path}")
-    elif args.dry_run:
-        logger.info("DRY RUN: Skipping video generation")
-        video_path = find_last_video()
+        index = post_index
     else:
-        logger.info("Generating video...")
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        try:
-            result = process_verse(verse, index + 1, total)
-            if result:
-                video_path = result
-                logger.info(f"Video generated: {video_path}")
-            else:
-                logger.error("Video generation returned no path")
-                sys.exit(2)
-        except Exception as e:
-            logger.error(f"Video generation failed: {e}")
-            sys.exit(2)
+        # Generate (and optionally post) uses the generate cursor
+        index = state["next_index"] % total
+        verse = verses[index]
+        logger.info(f"Verse {index + 1}/{total}: {verse['name']} ({_verse_ref(verse)})")
+        logger.info(f"Reciter: {verse['reciter']}")
 
-    if args.generate_only:
-        logger.info("--generate-only: Skipping posting")
-        state["next_index"] = (index + 1) % total
-        save_state(state)
-        logger.info(f"State updated: next_index={state['next_index']}")
-        sys.exit(0)
+        video_path = None
+        if args.dry_run:
+            logger.info("DRY RUN: Skipping video generation")
+            video_path = find_last_video()
+        else:
+            logger.info("Generating video...")
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            try:
+                result = process_verse(verse, index + 1, total)
+                if result:
+                    video_path = result
+                    logger.info(f"Video generated: {video_path}")
+                else:
+                    logger.error("Video generation returned no path")
+                    sys.exit(2)
+            except Exception as e:
+                logger.error(f"Video generation failed: {e}")
+                sys.exit(2)
+
+        if args.generate_only:
+            logger.info("--generate-only: Skipping posting")
+            state["next_index"] = (index + 1) % total
+            save_state(state)
+            logger.info(f"State updated: next_index={state['next_index']}")
+            sys.exit(0)
 
     # Build captions
     caption = build_caption(verse)
@@ -380,7 +394,12 @@ def main():
     })
     state["history"] = state["history"][-100:]
     if any_succeeded:
-        state["next_index"] = (index + 1) % total
+        if args.post_only:
+            state["next_post_index"] = (index + 1) % total
+        else:
+            # Full pipeline: advance both cursors together
+            state["next_index"] = (index + 1) % total
+            state["next_post_index"] = state["next_index"]
     save_state(state)
 
     # Summary
@@ -389,9 +408,12 @@ def main():
     summary = ", ".join(f"{p}: {'OK' if s else 'FAILED'}" for p, s in results.items())
     logger.info(f"Results: {summary}")
     if any_succeeded:
-        logger.info(f"State updated: next_index={state['next_index']}")
+        if args.post_only:
+            logger.info(f"State updated: next_post_index={state['next_post_index']}")
+        else:
+            logger.info(f"State updated: next_index={state['next_index']}")
     else:
-        logger.info(f"All platforms failed — next_index stays at {state['next_index']} (will retry this verse)")
+        logger.info("All platforms failed — state unchanged (will retry this verse)")
 
     if args.dry_run:
         logger.info("DRY RUN complete.")
