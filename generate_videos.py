@@ -37,6 +37,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONTS_DIR = os.path.join(SCRIPT_DIR, "fonts")
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 VERSES_FILE = os.path.join(SCRIPT_DIR, "verses.json")
+STATE_FILE = os.path.join(SCRIPT_DIR, "state.json")
 LOG_FILE = os.path.join(OUTPUT_DIR, "generation.log")
 
 ARABIC_FONT_PATH = os.path.join(FONTS_DIR, "Amiri-Regular.ttf")
@@ -108,6 +109,22 @@ def load_verses():
         if "ayah_end" not in v:
             v["ayah_end"] = v["ayah"]
     return verses
+
+
+def load_state():
+    """Read state.json (shared with auto_post.py)."""
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"next_index": 0, "history": []}
+
+
+def save_state(state):
+    """Write state.json atomically (compatible with auto_post.py)."""
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, STATE_FILE)
 
 
 # ── API helpers ──────────────────────────────────────────────────────────────
@@ -830,30 +847,44 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    verses = load_verses()
-    total_all = len(verses)
+    all_verses = load_verses()
+    total_all = len(all_verses)
     log(f"Loaded {total_all} verses from {VERSES_FILE}")
 
+    state = load_state()
+    use_subtitles = not args.no_subtitles
+    update_state = False
+
     if args.test:
-        verses = [verses[0]]
+        to_generate = [(0, all_verses[0])]
         log("--test mode: generating only the first verse")
     elif args.verse is not None:
         if args.verse < 1 or args.verse > total_all:
             print(f"ERROR: --verse must be between 1 and {total_all}")
             sys.exit(1)
-        verses = [verses[args.verse - 1]]
+        idx = args.verse - 1
+        to_generate = [(idx, all_verses[idx])]
         log(f"--verse mode: generating only verse {args.verse}")
+    else:
+        start_idx = state["next_index"] % total_all
+        to_generate = []
+        for offset in range(total_all):
+            idx = (start_idx + offset) % total_all
+            to_generate.append((idx, all_verses[idx]))
+        update_state = True
+        log(f"Resuming from verse {start_idx + 1} (state.json next_index={start_idx})")
 
-    total = len(verses)
+    total = len(to_generate)
     successes = 0
     failures = []
 
-    use_subtitles = not args.no_subtitles
-
-    for i, verse in enumerate(verses, start=1):
+    for count, (idx, verse) in enumerate(to_generate, start=1):
         try:
-            if process_verse(verse, i, total, subtitles=use_subtitles):
+            if process_verse(verse, count, total, subtitles=use_subtitles):
                 successes += 1
+                if update_state:
+                    state["next_index"] = (idx + 1) % total_all
+                    save_state(state)
         except Exception as e:
             name = verse.get("name", f"{verse['surah']}:{verse['ayah']}")
             log(f"  ERROR processing {name}: {e}")
