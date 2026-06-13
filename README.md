@@ -2,7 +2,7 @@
 
 Generates vertical videos (1080×1920) of Quran verses — Arabic text over scenic backgrounds with recitation audio. Built for Instagram Reels, TikTok, and YouTube Shorts.
 
-The text appears in sync with the recitation: about five words at a time, centered on screen. Timing is extracted from the actual audio using Whisper (`faster-whisper`), with Quran.com proportional scaling as a fallback. Arabic only, no English translation.
+The text appears in sync with the recitation: about five words at a time, centered on screen. Timing is extracted from the actual audio using Whisper (`faster-whisper`), with Quran.com proportional scaling as a fallback. The daily pipeline renders Arabic only; planned reels (see below) add a verbatim English translation.
 
 ## Project structure
 
