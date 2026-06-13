@@ -173,8 +173,13 @@ def fetch_translations(surah, ayah_start, ayah_end):
 
 
 def fetch_audio(surah, ayah_start, ayah_end, reciter, dest):
-    """Download recitation audio for a verse range. Concatenates if multiple ayahs."""
+    """Download recitation audio for a verse range. Concatenates if multiple ayahs.
+
+    Returns the per-ayah durations in seconds, ffprobed before concat, so plan
+    mode can place translation boundaries exactly on each ayah's audio span.
+    """
     audio_files = []
+    per_ayah_durations = []
     tmpdir = tempfile.mkdtemp(prefix="quran_audio_")
 
     try:
@@ -197,6 +202,7 @@ def fetch_audio(surah, ayah_start, ayah_end, reciter, dest):
                 raise RuntimeError(f"Downloaded audio for {surah}:{ayah} is empty (0 bytes)")
             log(f"    Downloaded {surah}:{ayah} audio: {size} bytes")
             audio_files.append(audio_path)
+            per_ayah_durations.append(get_audio_duration(audio_path))
 
         if len(audio_files) == 1:
             shutil.copy2(audio_files[0], dest)
@@ -215,6 +221,8 @@ def fetch_audio(surah, ayah_start, ayah_end, reciter, dest):
             log(f"    Concatenated {len(audio_files)} audio files")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return per_ayah_durations
 
 
 def get_audio_duration(path):
@@ -738,12 +746,12 @@ def process_verse(verse, index, total, subtitles=True, output_dir=None, max_tota
         # 2. Fetch audio from AlQuran Cloud (with fallback reciter)
         log(f"  Fetching recitation audio ({reciter})...")
         try:
-            fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
+            per_ayah_durations = fetch_audio(surah, ayah, ayah_end, reciter, audio_path)
         except Exception as e:
             if reciter != FALLBACK_RECITER:
                 log(f"  Audio failed with {reciter}: {e}")
                 log(f"  Retrying with fallback reciter: {FALLBACK_RECITER}")
-                fetch_audio(surah, ayah, ayah_end, FALLBACK_RECITER, audio_path)
+                per_ayah_durations = fetch_audio(surah, ayah, ayah_end, FALLBACK_RECITER, audio_path)
             else:
                 raise
 
