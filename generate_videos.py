@@ -68,6 +68,16 @@ QURANCOM_RECITER_IDS = {
 }
 CHUNK_ANTICIPATION_S = 0.150  # show text 150ms before reciter speaks
 
+# Translation lower third (planned reels)
+TRANSLATION_FONT_SIZE = 44
+TRANSLATION_FONT_FLOOR = 28
+TRANSLATION_FONT_STEP = 2
+TRANSLATION_COLOR = (245, 241, 232, 255)  # ivory #F5F1E8
+TRANSLATION_BOX_BOTTOM = 1560
+TRANSLATION_BOX_MIN_TOP = 1040  # box top never rises above this (max height 520)
+TRANSLATION_GAP = 40  # minimum gap below the Arabic box
+TRANSLATION_LINE_SPACING = 12
+
 # Arabic reshaper config: preserve tashkeel/harakat
 RESHAPER_CONFIG = {
     "delete_harakat": False,
@@ -533,11 +543,103 @@ def draw_rounded_rect(draw_ctx, bbox, radius, fill):
     draw_ctx.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=fill)
 
 
-def render_chunk_overlay(chunk_text, surah_name, surah_name_ar, surah, ayah, ayah_end, dest):
+def _wrap_latin_text(text, font, max_width, draw):
+    """Word-wrap left-to-right text into lines no wider than max_width."""
+    words = text.split()
+    lines, current = [], []
+    for word in words:
+        candidate = " ".join(current + [word])
+        if not current or draw.textlength(candidate, font=font) <= max_width:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+
+def _latin_line_height(font):
+    ascent, descent = font.getmetrics()
+    return ascent + descent
+
+
+def _translation_lines_height(lines, font):
+    line_h = _latin_line_height(font)
+    return len(lines) * line_h + max(len(lines) - 1, 0) * TRANSLATION_LINE_SPACING
+
+
+def arabic_box_bottom(chunk_text, draw):
+    """Bottom y of the centered Arabic box for a chunk (mirrors render_chunk_overlay)."""
+    font = ImageFont.truetype(ARABIC_FONT_PATH, ARABIC_FONT_SIZE)
+    lines = wrap_arabic_text(chunk_text, font, VIDEO_WIDTH - 120, draw)
+    total_height = 0
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        total_height += bbox[3] - bbox[1]
+    total_height += 20 * max(len(lines) - 1, 0)
+    block_y = (VIDEO_HEIGHT - total_height) // 2
+    return block_y + total_height + 30
+
+
+def translation_available_height(chunk_text, draw):
+    """Text height available for the translation under a chunk's Arabic box.
+
+    The box bottom is fixed at TRANSLATION_BOX_BOTTOM; its top is the lower of
+    the y1040 ceiling and a 40px gap below the Arabic box, so a taller Arabic
+    block leaves less room (handled by shrinking, then paginating).
+    """
+    box_top = max(TRANSLATION_BOX_MIN_TOP, arabic_box_bottom(chunk_text, draw) + TRANSLATION_GAP)
+    return (TRANSLATION_BOX_BOTTOM - box_top) - 2 * 30
+
+
+def fit_translation_pages(text, draw, available_height):
+    """Pick a font size and split text into pages that fit available_height.
+
+    Returns (font_size, [page_lines, ...]). The largest size from 44px down to
+    the 28px floor whose wrapped text fits in one page wins. If even the floor
+    overflows, the floor-wrapped lines are paginated into whole-line pages that
+    each fit (never splitting a line).
+    """
+    max_width = VIDEO_WIDTH - 120
+    size = TRANSLATION_FONT_SIZE
+    while size >= TRANSLATION_FONT_FLOOR:
+        font = ImageFont.truetype(ENGLISH_FONT_PATH, size)
+        lines = _wrap_latin_text(text, font, max_width, draw)
+        if _translation_lines_height(lines, font) <= available_height:
+            return size, [lines]
+        size -= TRANSLATION_FONT_STEP
+    font = ImageFont.truetype(ENGLISH_FONT_PATH, TRANSLATION_FONT_FLOOR)
+    lines = _wrap_latin_text(text, font, max_width, draw)
+    line_h = _latin_line_height(font)
+    per_page = max(1, (available_height + TRANSLATION_LINE_SPACING) // (line_h + TRANSLATION_LINE_SPACING))
+    pages = [lines[i:i + per_page] for i in range(0, len(lines), per_page)]
+    return TRANSLATION_FONT_FLOOR, pages
+
+
+def _draw_translation(draw, lines, font):
+    """Draw the translation lower third: box bottom-anchored at y1560, text centered."""
+    padding = 30
+    block_height = _translation_lines_height(lines, font)
+    box_y1 = TRANSLATION_BOX_BOTTOM
+    box_y0 = box_y1 - block_height - 2 * padding
+    draw_rounded_rect(draw, (30, box_y0, VIDEO_WIDTH - 30, box_y1), 20, (0, 0, 0, 160))
+    line_h = _latin_line_height(font)
+    y = box_y0 + padding
+    for line in lines:
+        line_w = draw.textlength(line, font=font)
+        x = (VIDEO_WIDTH - line_w) // 2
+        draw.text((x, y), line, font=font, fill=TRANSLATION_COLOR)
+        y += line_h + TRANSLATION_LINE_SPACING
+
+
+def render_chunk_overlay(chunk_text, surah_name, surah_name_ar, surah, ayah, ayah_end, dest,
+                         translation_lines=None, translation_font_size=None):
     """
     Render a 1080x1920 RGBA PNG for one chunk:
     - Arabic chunk text centered vertically on screen
     - Surah reference at the bottom
+    - Translation lower third when translation_lines is given (planned reels)
     """
     img = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -600,6 +702,11 @@ def render_chunk_overlay(chunk_text, surah_name, surah_name_ar, surah, ayah, aya
     ref_x = (VIDEO_WIDTH - ref_w) // 2
     draw.text((ref_x + shadow_offset, ref_y + shadow_offset), reference, font=reference_font, fill=shadow_color)
     draw.text((ref_x, ref_y), reference, font=reference_font, fill=text_color)
+
+    # ── Translation lower third (planned reels only) ──
+    if translation_lines:
+        trans_font = ImageFont.truetype(ENGLISH_FONT_PATH, translation_font_size)
+        _draw_translation(draw, translation_lines, trans_font)
 
     img.save(dest, "PNG")
 
