@@ -306,6 +306,73 @@ def post_one_video(video_path, verse, state, total, platform=None, dry_run=False
     return any_succeeded
 
 
+def run_direct(args):
+    """Post one specific file through the platform functions, touching no state.
+
+    Caption, title, and description come from the flags, falling back to the
+    sidecars beside the video (caption.txt, youtube_title.txt,
+    youtube_description.txt). state.json is never read or written.
+    """
+    video_path = args.video
+    if not os.path.isfile(video_path):
+        logger.error(f"Video not found: {video_path}")
+        sys.exit(2)
+    reel_dir = os.path.dirname(os.path.abspath(video_path))
+
+    def read_sidecar(name):
+        path = os.path.join(reel_dir, name)
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        return None
+
+    if args.caption_file:
+        if not os.path.isfile(args.caption_file):
+            logger.error(f"Caption file not found: {args.caption_file}")
+            sys.exit(2)
+        with open(args.caption_file, "r", encoding="utf-8") as f:
+            caption = f.read().strip()
+    else:
+        caption = read_sidecar("caption.txt")
+    if not caption:
+        logger.error("No caption: pass --caption-file or place caption.txt beside the video")
+        sys.exit(2)
+
+    title = args.title or read_sidecar("youtube_title.txt") or caption.splitlines()[0]
+    description = read_sidecar("youtube_description.txt") or caption
+
+    post_meta = args.platform is None or args.platform == "meta"
+    post_youtube = args.platform is None or args.platform == "youtube"
+
+    logger.info(f"Direct post: {os.path.basename(video_path)} (no state.json changes)")
+    logger.info(f"Caption:\n{caption}")
+
+    results = {}
+    if post_meta:
+        try:
+            results["instagram"] = post_to_instagram(video_path, caption, dry_run=args.dry_run)
+        except Exception as e:
+            logger.error(f"Instagram: {e}")
+            results["instagram"] = False
+        try:
+            results["facebook"] = post_to_facebook(video_path, caption, dry_run=args.dry_run)
+        except Exception as e:
+            logger.error(f"Facebook: {e}")
+            results["facebook"] = False
+    if post_youtube:
+        try:
+            results["youtube"] = post_to_youtube(video_path, title, description, dry_run=args.dry_run)
+        except Exception as e:
+            logger.error(f"YouTube: {e}")
+            results["youtube"] = False
+
+    summary = ", ".join(f"{p}: {'OK' if s else 'FAILED'}" for p, s in results.items())
+    logger.info(f"Results: {summary}")
+    if args.dry_run:
+        logger.info("DRY RUN complete.")
+    sys.exit(0 if any(results.values()) or args.dry_run else 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Automated Quran video posting pipeline")
     parser.add_argument("--generate-only", action="store_true", help="Generate video only, don't post")
@@ -313,12 +380,19 @@ def main():
     parser.add_argument("--post-all", action="store_true", help="Post all unposted videos in output/")
     parser.add_argument("--dry-run", action="store_true", help="Simulate everything")
     parser.add_argument("--platform", choices=["meta", "youtube"], help="Target specific platform")
+    parser.add_argument("--video", help="Post a specific mp4 directly, with no state.json changes")
+    parser.add_argument("--caption-file", help="Caption file for --video (defaults to caption.txt beside the video)")
+    parser.add_argument("--title", help="YouTube title for --video (defaults to youtube_title.txt or the caption's first line)")
     args = parser.parse_args()
 
     setup_logging()
     logger.info("=" * 60)
     logger.info("Quran Auto-Post Pipeline")
     logger.info("=" * 60)
+
+    # ── Direct mode: post one specific file, no state.json access ──
+    if args.video:
+        run_direct(args)
 
     state = load_state()
     verses = load_verses()
