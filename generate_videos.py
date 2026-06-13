@@ -680,11 +680,14 @@ def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration,
 
 # ── Per-verse pipeline ───────────────────────────────────────────────────────
 
-def process_verse(verse, index, total, subtitles=True, output_dir=None):
+def process_verse(verse, index, total, subtitles=True, output_dir=None, max_total_s=None):
     """Process a single verse: fetch data, render chunk overlays, compose video.
 
     output_dir overrides where the mp4 is written; it defaults to OUTPUT_DIR so
     the daily pipeline is unchanged. Plan mode passes the reel's own directory.
+    max_total_s, when set, aborts before FFmpeg if the freshly measured audio
+    plus lead-in and outro would exceed it (the planned-reel duration budget);
+    it defaults to None so the daily pipeline stays ungated.
     """
     surah = verse["surah"]
     ayah = verse["ayah"]
@@ -732,6 +735,16 @@ def process_verse(verse, index, total, subtitles=True, output_dir=None):
         # 4. Audio duration
         audio_duration = get_audio_duration(audio_path)
         log(f"  Audio duration: {audio_duration:.1f}s")
+
+        # 4b. Duration budget gate (planned reels): abort before any FFmpeg work.
+        if max_total_s is not None:
+            projected = audio_duration + AUDIO_DELAY_S + EXTRA_DURATION_S
+            if projected > max_total_s:
+                raise RuntimeError(
+                    f"audio {audio_duration:.1f}s plus {AUDIO_DELAY_S + EXTRA_DURATION_S:.1f}s "
+                    f"lead-in and outro is {projected:.1f}s, over the {max_total_s:.0f}s budget; "
+                    "choose a shorter passage or a faster reciter"
+                )
 
         # 5. Fetch background video
         log("  Fetching background video from Pexels...")
@@ -854,7 +867,8 @@ def render_plan(plan_path, subtitles=True):
         ref = f"{verse['surah']}:{verse['ayah']}-{verse['ayah_end']}"
     log(f"Planned reel: {verse['name']} ({ref}) -> {plan_dir}")
 
-    output_path = process_verse(verse, 1, 1, subtitles=subtitles, output_dir=plan_dir)
+    output_path = process_verse(verse, 1, 1, subtitles=subtitles, output_dir=plan_dir,
+                                 max_total_s=plan.get("budget_s"))
 
     from captions import build_caption, build_youtube_title, build_youtube_description
     sidecars = {
