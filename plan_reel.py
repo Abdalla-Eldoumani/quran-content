@@ -14,6 +14,7 @@ import argparse
 import io
 import os
 import sys
+import time
 
 # Fix Windows console encoding for non-ASCII output (passage titles, markers).
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -21,10 +22,15 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+import requests
+
 import theme_lib
+from generate_videos import ALQURAN_API_BASE, API_SLEEP_S, get_audio_duration
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(SCRIPT_DIR, "cache", "audio")
 DEFAULT_RECITER = "ar.minshawi"
 DEFAULT_MAX_SECONDS = 59
 
@@ -58,6 +64,49 @@ def resolve_candidates(themes, theme_slug=None, topic=None, list_unverified=Fals
     if topic:
         return theme_lib.search(themes, topic)
     return []
+
+
+# ── Audio measurement ────────────────────────────────────────────────────────
+
+def audio_cache_path(reciter, surah, ayah):
+    """Local cache path for one ayah's recitation mp3."""
+    return os.path.join(CACHE_DIR, reciter, f"{surah}_{ayah}.mp3")
+
+
+def _download_ayah_audio(surah, ayah, reciter, dest):
+    """Download one ayah's mp3 from AlQuran Cloud to dest (same endpoints as the renderer)."""
+    meta_url = f"{ALQURAN_API_BASE}/ayah/{surah}:{ayah}/{reciter}"
+    resp = requests.get(meta_url, timeout=30)
+    resp.raise_for_status()
+    audio_url = resp.json()["data"].get("audio")
+    if not audio_url:
+        raise RuntimeError(f"no audio available for {surah}:{ayah} under {reciter}")
+    audio_resp = requests.get(audio_url, timeout=60)
+    audio_resp.raise_for_status()
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "wb") as f:
+        f.write(audio_resp.content)
+    if os.path.getsize(dest) == 0:
+        os.remove(dest)
+        raise RuntimeError(f"downloaded audio for {surah}:{ayah} is empty")
+
+
+def measure_passage(surah, ayah, ayah_end, reciter):
+    """Measure per-ayah recitation durations for a passage, caching mp3s on disk.
+
+    Returns (per_ayah_durations, total_seconds). Each ayah's mp3 is downloaded
+    once into cache/audio/<reciter>/<surah>_<ayah>.mp3 and reused on later runs;
+    only cache misses hit the network, paced by API_SLEEP_S. Raises RuntimeError
+    if any ayah's audio is missing or empty (the caller treats this as NO AUDIO).
+    """
+    durations = []
+    for ayah_num in range(ayah, ayah_end + 1):
+        cache_path = audio_cache_path(reciter, surah, ayah_num)
+        if not (os.path.exists(cache_path) and os.path.getsize(cache_path) > 0):
+            _download_ayah_audio(surah, ayah_num, reciter, cache_path)
+            time.sleep(API_SLEEP_S)
+        durations.append(get_audio_duration(cache_path))
+    return durations, sum(durations)
 
 
 # ── Candidate table ──────────────────────────────────────────────────────────
