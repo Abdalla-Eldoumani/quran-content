@@ -1,0 +1,9 @@
+requests==2.34.2
+python-bidi==0.6.10
+arabic-reshaper==3.0.1
+Pillow==12.2.0
+faster-whisper==1.2.1
+python-dotenv==1.2.2
+google-auth==2.54.0
+google-auth-oauthlib==1.4.0
+google-api-python-client==2.197.0
