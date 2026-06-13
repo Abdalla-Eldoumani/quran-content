@@ -1,0 +1,95 @@
+{
+  "_about": "Theme index for planned reels. Groups existing passages by topic so plan_reel.py can match a current moment to a passage. Keywords and groupings are editorial search metadata maintained by hand. Passage text, audio, and translation always come from the verified APIs at render time; nothing here contains or replaces religious text.",
+  "_rules": "A passage renders only when verified is true. Set verified to true after confirming the range reads as a complete thought on its own: check the surrounding ayahs and a trusted tafsir summary, then record the date in verified_on. The note field is for the maintainer's own context reminder.",
+  "themes": [
+    {
+      "slug": "hardship-and-relief",
+      "title": "Hardship and relief",
+      "keywords": ["hardship", "difficulty", "disaster", "earthquake", "flood", "loss", "grief", "struggle", "crisis", "ease", "relief", "calamity"],
+      "passages": [
+        { "surah": 94, "ayah": 5, "ayah_end": 6, "name": "With Hardship Comes Ease", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 65, "ayah": 7, "ayah_end": 7, "name": "After Hardship - Ease", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 65, "ayah": 2, "ayah_end": 3, "name": "Allah Makes a Way Out", "verified": false, "verified_on": null, "note": "Range starts mid-ruling about divorce; confirm the standalone reading before verifying." },
+        { "surah": 2, "ayah": 216, "ayah_end": 216, "name": "Perhaps You Dislike Something Good for You", "verified": false, "verified_on": null, "note": "Opens with a fighting ordinance; confirm framing intent before verifying." },
+        { "surah": 21, "ayah": 83, "ayah_end": 84, "name": "Dua of Ayyub", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 12, "ayah": 86, "ayah_end": 86, "name": "I Complain Only to Allah", "verified": false, "verified_on": null, "note": "" }
+      ]
+    },
+    {
+      "slug": "hope-and-mercy",
+      "title": "Hope and mercy",
+      "keywords": ["hope", "despair", "mercy", "forgiveness", "repentance", "sin", "guilt", "second chance", "dua"],
+      "passages": [
+        { "surah": 39, "ayah": 53, "ayah_end": 53, "name": "Despair Not of Allah's Mercy", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 12, "ayah": 87, "ayah_end": 87, "name": "Do Not Despair of Allah's Mercy", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 7, "ayah": 56, "ayah_end": 56, "name": "Mercy of Allah is Near", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 40, "ayah": 60, "ayah_end": 60, "name": "Call Upon Me", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 27, "ayah": 62, "ayah_end": 62, "name": "Who Responds to the Distressed", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 23, "ayah": 118, "ayah_end": 118, "name": "Lord Forgive and Have Mercy", "verified": false, "verified_on": null, "note": "" }
+      ]
+    },
+    {
+      "slug": "patience-and-perseverance",
+      "title": "Patience and perseverance",
+      "keywords": ["patience", "perseverance", "resilience", "setback", "failure", "exams", "defeat", "endurance", "sabr"],
+      "passages": [
+        { "surah": 3, "ayah": 139, "ayah_end": 139, "name": "Do Not Weaken", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 29, "ayah": 69, "ayah_end": 69, "name": "Strive in Our Way", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 53, "ayah": 39, "ayah_end": 40, "name": "Man Gets Only What He Strives For", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 9, "ayah": 51, "ayah_end": 51, "name": "Nothing Befalls Us", "verified": false, "verified_on": null, "note": "" }
+      ]
+    },
+    {
+      "slug": "justice-and-human-dignity",
+      "title": "Justice and human dignity",
+      "keywords": ["justice", "oppression", "injustice", "racism", "equality", "dignity", "violence", "war", "conflict", "humanity"],
+      "passages": [
+        { "surah": 5, "ayah": 32, "ayah_end": 32, "name": "Saving a Life", "verified": false, "verified_on": null, "note": "Frequently quoted partially; confirm whether to render the full ayah and check length against the 60s gate." },
+        { "surah": 49, "ayah": 13, "ayah_end": 13, "name": "Created You as Nations and Tribes", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 41, "ayah": 34, "ayah_end": 35, "name": "Repel Evil with Good", "verified": false, "verified_on": null, "note": "" }
+      ]
+    },
+    {
+      "slug": "trust-in-allah",
+      "title": "Trust in Allah",
+      "keywords": ["trust", "tawakkul", "anxiety", "fear", "uncertainty", "alone", "loneliness", "worry", "stress"],
+      "passages": [
+        { "surah": 3, "ayah": 173, "ayah_end": 174, "name": "Sufficient is Allah", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 64, "ayah": 11, "ayah_end": 11, "name": "Trust in Allah - Tawakkul", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 57, "ayah": 4, "ayah_end": 4, "name": "He is With You Wherever You Are", "verified": false, "verified_on": null, "note": "Long ayah; check measured duration per reciter against the gate." },
+        { "surah": 2, "ayah": 186, "ayah_end": 186, "name": "I Am Near", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 18, "ayah": 10, "ayah_end": 10, "name": "Dua of the Cave", "verified": false, "verified_on": null, "note": "" }
+      ]
+    },
+    {
+      "slug": "gratitude-and-contentment",
+      "title": "Gratitude and contentment",
+      "keywords": ["gratitude", "thankfulness", "blessings", "contentment", "peace", "calm", "ramadan", "eid"],
+      "passages": [
+        { "surah": 14, "ayah": 7, "ayah_end": 7, "name": "Be Grateful and I Will Increase You", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 13, "ayah": 28, "ayah_end": 28, "name": "Hearts Find Rest in Remembrance", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 16, "ayah": 97, "ayah_end": 97, "name": "Good Life for the Righteous", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 36, "ayah": 58, "ayah_end": 58, "name": "Peace from a Merciful Lord", "verified": false, "verified_on": null, "note": "" }
+      ]
+    },
+    {
+      "slug": "generosity-and-care",
+      "title": "Generosity and care",
+      "keywords": ["charity", "giving", "hunger", "poverty", "refugees", "orphans", "family", "parents", "kindness", "sadaqah"],
+      "passages": [
+        { "surah": 76, "ayah": 8, "ayah_end": 9, "name": "Feeding for the Sake of Allah", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 17, "ayah": 23, "ayah_end": 24, "name": "Be Kind to Parents", "verified": false, "verified_on": null, "note": "" }
+      ]
+    },
+    {
+      "slug": "mortality-and-perspective",
+      "title": "Mortality and perspective",
+      "keywords": ["death", "loss", "funeral", "purpose", "meaning", "reflection", "akhirah", "perspective"],
+      "passages": [
+        { "surah": 3, "ayah": 185, "ayah_end": 185, "name": "Every Soul Shall Taste Death", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 23, "ayah": 115, "ayah_end": 115, "name": "Created Without Purpose?", "verified": false, "verified_on": null, "note": "" },
+        { "surah": 67, "ayah": 1, "ayah_end": 2, "name": "Blessed is He - Sovereignty", "verified": false, "verified_on": null, "note": "Passage starts at ayah 1; the audio file may include the basmala depending on the reciter source." }
+      ]
+    }
+  ]
+}
