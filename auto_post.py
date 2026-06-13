@@ -171,7 +171,7 @@ def post_to_facebook(video_path, caption, dry_run=False):
             data={"description": caption, "access_token": token}, timeout=300,
         )
     if resp.status_code != 200:
-        logger.error(f"Facebook: Upload failed: {resp.text}")
+        logger.error(f"Facebook: upload failed ({resp.status_code}): {resp.text[:300]}")
         return False
     logger.info(f"Facebook: Posted (ID: {resp.json().get('id', '?')})")
     return True
