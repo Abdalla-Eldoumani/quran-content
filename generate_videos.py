@@ -680,14 +680,19 @@ def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration,
 
 # ── Per-verse pipeline ───────────────────────────────────────────────────────
 
-def process_verse(verse, index, total, subtitles=True):
-    """Process a single verse: fetch data, render chunk overlays, compose video."""
+def process_verse(verse, index, total, subtitles=True, output_dir=None):
+    """Process a single verse: fetch data, render chunk overlays, compose video.
+
+    output_dir overrides where the mp4 is written; it defaults to OUTPUT_DIR so
+    the daily pipeline is unchanged. Plan mode passes the reel's own directory.
+    """
     surah = verse["surah"]
     ayah = verse["ayah"]
     ayah_end = verse["ayah_end"]
     name = verse["name"]
     reciter = verse["reciter"]
     query = verse["scenery_query"]
+    out_dir = output_dir or OUTPUT_DIR
 
     if ayah == ayah_end:
         ref_label = f"{surah}:{ayah}"
@@ -740,7 +745,7 @@ def process_verse(verse, index, total, subtitles=True):
             log(f"  No subtitles mode — video: {video_duration:.1f}s (delay: {audio_delay:.2f}s)")
 
             output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
-            output_path = os.path.join(OUTPUT_DIR, output_filename)
+            output_path = os.path.join(out_dir, output_filename)
             log("  Composing video (no subtitles) with FFmpeg...")
             compose_video_no_subtitles(bg_path, audio_path, output_path, audio_duration,
                                        video_duration, audio_delay_s=audio_delay)
@@ -804,7 +809,7 @@ def process_verse(verse, index, total, subtitles=True):
 
             # 9. Compose final video
             output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
-            output_path = os.path.join(OUTPUT_DIR, output_filename)
+            output_path = os.path.join(out_dir, output_filename)
             log("  Composing final video with FFmpeg...")
             compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
                           chunk_timings=chunk_timings, audio_delay_s=audio_delay)
