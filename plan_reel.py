@@ -25,7 +25,13 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
 import requests
 
 import theme_lib
-from generate_videos import ALQURAN_API_BASE, API_SLEEP_S, get_audio_duration
+from generate_videos import (
+    ALQURAN_API_BASE,
+    API_SLEEP_S,
+    AUDIO_DELAY_S,
+    EXTRA_DURATION_S,
+    get_audio_duration,
+)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -33,6 +39,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(SCRIPT_DIR, "cache", "audio")
 DEFAULT_RECITER = "ar.minshawi"
 DEFAULT_MAX_SECONDS = 59
+LEAD_IN_OUTRO_S = AUDIO_DELAY_S + EXTRA_DURATION_S  # lead-in (1.5) + outro (3.0)
 
 
 # ── Candidate resolution ─────────────────────────────────────────────────────
@@ -109,19 +116,61 @@ def measure_passage(surah, ayah, ayah_end, reciter):
     return durations, sum(durations)
 
 
+# ── Budget gate ──────────────────────────────────────────────────────────────
+
+def audio_budget(max_seconds):
+    """Maximum recitation seconds that still fit under max_seconds."""
+    return max_seconds - LEAD_IN_OUTRO_S
+
+
+def evaluate_candidate(passage, reciter, max_seconds):
+    """Measure a candidate and classify it against the budget.
+
+    Returns a dict: total (float or None), durations (list or None),
+    over_budget (bool), no_audio (bool), verified (bool).
+    """
+    result = {"total": None, "durations": None, "over_budget": False,
+              "no_audio": False, "verified": passage["verified"]}
+    try:
+        durations, total = measure_passage(
+            passage["surah"], passage["ayah"], passage["ayah_end"], reciter)
+    except Exception:
+        result["no_audio"] = True
+        return result
+    result["durations"] = durations
+    result["total"] = total
+    result["over_budget"] = total > audio_budget(max_seconds)
+    return result
+
+
 # ── Candidate table ──────────────────────────────────────────────────────────
 
-def print_candidates(candidates):
-    """Print a numbered table of candidates: name, theme, reference, status."""
+def print_candidates(candidates, reciter, max_seconds):
+    """Measure each candidate and print a numbered table with budget status.
+
+    Returns the per-candidate evaluation dicts, aligned with the input order.
+    """
     if not candidates:
         print("No matching passages.")
-        return
-    print(f"{'#':>2}  {'passage':<40}  {'theme':<26}  {'ref':<10}  status")
-    print("-" * 96)
+        return []
+    print(f"Reciter: {reciter}  |  audio budget: {audio_budget(max_seconds):.1f}s "
+          f"(max video {max_seconds:.0f}s)")
+    print(f"{'#':>2}  {'passage':<34}  {'theme':<22}  {'ref':<9}  {'audio':>7}  status")
+    print("-" * 92)
+    evaluations = []
     for i, (theme, passage) in enumerate(candidates, start=1):
-        status = "verified" if passage["verified"] else "UNVERIFIED"
-        print(f"{i:>2}  {passage['name'][:40]:<40}  {theme['slug'][:26]:<26}  "
-              f"{passage_ref(passage):<10}  {status}")
+        ev = evaluate_candidate(passage, reciter, max_seconds)
+        evaluations.append(ev)
+        if ev["no_audio"]:
+            audio_col, flags = "--", ["NO AUDIO"]
+        else:
+            audio_col = f"{ev['total']:.1f}s"
+            flags = ["verified" if ev["verified"] else "UNVERIFIED"]
+            if ev["over_budget"]:
+                flags.append("OVER BUDGET")
+        print(f"{i:>2}  {passage['name'][:34]:<34}  {theme['slug'][:22]:<22}  "
+              f"{passage_ref(passage):<9}  {audio_col:>7}  {', '.join(flags)}")
+    return evaluations
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -154,7 +203,7 @@ def main():
         themes, theme_slug=args.theme, topic=args.topic,
         list_unverified=args.list_unverified,
     )
-    print_candidates(candidates)
+    print_candidates(candidates, args.reciter, args.max_seconds)
 
 
 if __name__ == "__main__":
