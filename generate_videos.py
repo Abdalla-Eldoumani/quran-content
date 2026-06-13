@@ -1002,6 +1002,8 @@ def process_verse(verse, index, total, subtitles=True, output_dir=None, max_tota
 
             # 8. Split text into chunks and build timings
             chunks = split_into_chunks(arabic)
+            if not chunks:
+                raise RuntimeError(f"no Arabic text returned for {surah}:{ayah}-{ayah_end}")
             num_text_words = len(arabic.split())
 
             if whisper_segments:
