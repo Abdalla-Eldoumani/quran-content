@@ -824,6 +824,53 @@ def process_verse(verse, index, total, subtitles=True, output_dir=None):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# ── Planned reel ─────────────────────────────────────────────────────────────
+
+def render_plan(plan_path, subtitles=True):
+    """Render a planned reel from its reel_plan.json into the plan's directory.
+
+    Builds a verse dict from the plan, renders it via process_verse with the
+    plan directory as the output directory, and writes the caption sidecars
+    beside the mp4. Never reads or writes state.json.
+    """
+    with open(plan_path, "r", encoding="utf-8") as f:
+        plan = json.load(f)
+
+    verse = {
+        "surah": plan["surah"],
+        "ayah": plan["ayah"],
+        "ayah_end": plan["ayah_end"],
+        "name": plan["name"],
+        "reciter": plan["reciter"],
+        "scenery_query": plan["scenery_query"],
+    }
+
+    plan_dir = os.path.dirname(os.path.abspath(plan_path))
+    os.makedirs(plan_dir, exist_ok=True)
+
+    if verse["ayah"] == verse["ayah_end"]:
+        ref = f"{verse['surah']}:{verse['ayah']}"
+    else:
+        ref = f"{verse['surah']}:{verse['ayah']}-{verse['ayah_end']}"
+    log(f"Planned reel: {verse['name']} ({ref}) -> {plan_dir}")
+
+    output_path = process_verse(verse, 1, 1, subtitles=subtitles, output_dir=plan_dir)
+
+    from captions import build_caption, build_youtube_title, build_youtube_description
+    sidecars = {
+        "caption.txt": build_caption(verse),
+        "youtube_title.txt": build_youtube_title(verse),
+        "youtube_description.txt": build_youtube_description(verse),
+    }
+    for filename, content in sidecars.items():
+        with open(os.path.join(plan_dir, filename), "w", encoding="utf-8") as f:
+            f.write(content + "\n")
+    log(f"  Wrote caption sidecars: {', '.join(sidecars)}")
+    log(f"  Reel: {output_path}")
+    save_log()
+    return output_path
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -832,6 +879,8 @@ def main():
     parser.add_argument("--verse", type=int, help="Generate only verse N (1-indexed)")
     parser.add_argument("--no-subtitles", action="store_true",
                         help="Generate video with background + audio only (no text overlays)")
+    parser.add_argument("--plan", metavar="PATH",
+                        help="Render a planned reel from its reel_plan.json (never touches state.json)")
     args = parser.parse_args()
 
     if not shutil.which("ffmpeg"):
@@ -849,6 +898,15 @@ def main():
             if not os.path.isfile(font_path):
                 print(f"ERROR: Font not found: {font_path}")
                 sys.exit(1)
+
+    if args.plan:
+        try:
+            render_plan(args.plan, subtitles=not args.no_subtitles)
+        except Exception as e:
+            log(f"ERROR: {e}")
+            save_log()
+            sys.exit(1)
+        return
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
