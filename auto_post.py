@@ -29,20 +29,13 @@ except ImportError:
     pass
 
 from generate_videos import OUTPUT_DIR, load_verses, process_verse
+from captions import build_caption, build_youtube_title, build_youtube_description, _verse_ref
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(SCRIPT_DIR, "state.json")
 STATE_TMP = STATE_FILE + ".tmp"
 LOG_FILE = os.path.join(OUTPUT_DIR, "auto_post.log")
 GRAPH_API = "https://graph.facebook.com/v21.0"
-
-RECITER_NAMES = {
-    "ar.alafasy": "Mishary Rashid al-Afasy",
-    "ar.husary": "Mahmoud Khaleel al-Husary",
-    "ar.minshawi": "Muhammad Siddiq al-Minshawi",
-    "ar.muhammadayyoub": "Muhammad Ayyub",
-    "ar.abdurrahmaansudais": "Abdul Rahman As-Sudais",
-}
 
 logger = logging.getLogger("auto_post")
 
@@ -74,33 +67,6 @@ def save_state(state):
     with open(STATE_TMP, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
     os.replace(STATE_TMP, STATE_FILE)
-
-
-def _verse_ref(verse):
-    s, a, e = verse["surah"], verse["ayah"], verse["ayah_end"]
-    return f"{s}:{a}" if a == e else f"{s}:{a}-{e}"
-
-
-def build_caption(verse):
-    ref = _verse_ref(verse)
-    reciter = RECITER_NAMES.get(verse["reciter"], verse["reciter"])
-    return (
-        f"{verse['name']} | {ref}\n\n"
-        f"Recited by Sheikh {reciter}\n\n"
-        f"May Allah grant us understanding of His words.\n\n"
-        f"#Quran #QuranRecitation #Islam #Muslim #DailyQuran "
-        f"#IslamicReminder #QuranVerses #Dawah #SadaqahJariyah"
-    )
-
-
-def build_youtube_title(verse):
-    return f"{verse['name']} | {_verse_ref(verse)} | Quran Recitation #Shorts"
-
-
-def build_youtube_description(verse):
-    ref = _verse_ref(verse)
-    reciter = RECITER_NAMES.get(verse["reciter"], verse["reciter"])
-    return f"{verse['name']} | {ref}\n\nRecited by Sheikh {reciter}\n\nMay Allah grant us understanding of His words."
 
 
 def upload_to_temp_host(video_path):
