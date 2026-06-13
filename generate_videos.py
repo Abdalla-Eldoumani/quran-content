@@ -711,6 +711,69 @@ def render_chunk_overlay(chunk_text, surah_name, surah_name_ar, surah, ayah, aya
     img.save(dest, "PNG")
 
 
+def build_translation_overlays(chunks, windows, per_ayah_durations, ayah_start,
+                               translations, ref_args, tmpdir):
+    """Build per-(chunk, translation page) overlay PNGs for a planned reel.
+
+    Each moment shows the Arabic chunk plus the translation of the ayah owning
+    that moment; the translation switches exactly on ayah boundaries derived
+    from the cumulative per-ayah audio durations. A translation too long for the
+    box even at the floor size is paginated into equal sub-windows of that
+    ayah's time span. Returns (paths, timings) as parallel lists for
+    compose_video; timings are audio-relative.
+    """
+    ayah_spans = {}
+    cursor = 0.0
+    for offset, dur in enumerate(per_ayah_durations):
+        ayah_spans[ayah_start + offset] = (cursor, cursor + dur)
+        cursor += dur
+
+    scratch = ImageDraw.Draw(Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT)))
+
+    def owning_ayah(time_s):
+        for num, (start, end) in ayah_spans.items():
+            if start <= time_s < end:
+                return num
+        return ayah_start + len(per_ayah_durations) - 1
+
+    # Available translation height per ayah: the smallest over the chunks that
+    # start within it, so the chosen page size fits every chunk in that ayah.
+    ayah_avail = {}
+    for ci, (cs, _ce) in enumerate(windows):
+        num = owning_ayah(cs)
+        height = translation_available_height(chunks[ci], scratch)
+        ayah_avail[num] = min(ayah_avail.get(num, height), height)
+    for num in ayah_spans:
+        ayah_avail.setdefault(num, translation_available_height(chunks[0], scratch))
+
+    # Font size, page lines, and equal page sub-windows per ayah.
+    ayah_pages = {}
+    for num, (start, end) in ayah_spans.items():
+        font_size, pages = fit_translation_pages(translations[num], scratch, ayah_avail[num])
+        sub = (end - start) / len(pages)
+        ayah_pages[num] = [
+            (pages[p], font_size, start + p * sub, start + (p + 1) * sub)
+            for p in range(len(pages))
+        ]
+
+    paths, timings = [], []
+    idx = 0
+    for ci, (cs, ce) in enumerate(windows):
+        for num in ayah_spans:
+            for page_lines, font_size, ps_start, ps_end in ayah_pages[num]:
+                ov_start = max(cs, ps_start)
+                ov_end = min(ce, ps_end)
+                if ov_end > ov_start:
+                    dest = os.path.join(tmpdir, f"ov_{idx:03d}.png")
+                    render_chunk_overlay(chunks[ci], *ref_args, dest,
+                                         translation_lines=page_lines,
+                                         translation_font_size=font_size)
+                    paths.append(dest)
+                    timings.append((ov_start, ov_end))
+                    idx += 1
+    return paths, timings
+
+
 # ── Video composition ────────────────────────────────────────────────────────
 
 def compose_video_no_subtitles(bg_path, audio_path, output_path, audio_duration, video_duration,
@@ -816,7 +879,8 @@ def compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration,
 
 # ── Per-verse pipeline ───────────────────────────────────────────────────────
 
-def process_verse(verse, index, total, subtitles=True, output_dir=None, max_total_s=None):
+def process_verse(verse, index, total, subtitles=True, output_dir=None, max_total_s=None,
+                  translation=False):
     """Process a single verse: fetch data, render chunk overlays, compose video.
 
     output_dir overrides where the mp4 is written; it defaults to OUTPUT_DIR so
@@ -881,6 +945,12 @@ def process_verse(verse, index, total, subtitles=True, output_dir=None, max_tota
                     f"lead-in and outro is {projected:.1f}s, over the {max_total_s:.0f}s budget; "
                     "choose a shorter passage or a faster reciter"
                 )
+
+        # 4c. Fetch translations up front (planned reels) so a missing one aborts early.
+        translations = None
+        if subtitles and translation:
+            log("  Fetching en.sahih translations...")
+            translations = fetch_translations(surah, ayah, ayah_end)
 
         # 5. Fetch background video
         log("  Fetching background video from Pexels...")
@@ -950,18 +1020,37 @@ def process_verse(verse, index, total, subtitles=True, output_dir=None, max_tota
             else:
                 log(f"  Rendering {len(chunks)} chunk overlays (~{WORDS_PER_CHUNK} words each)...")
 
-            chunk_paths = []
-            for ci, chunk in enumerate(chunks):
-                chunk_dest = os.path.join(tmpdir, f"chunk_{ci:02d}.png")
-                render_chunk_overlay(chunk, surah_name, surah_name_ar, surah, ayah, ayah_end, chunk_dest)
-                chunk_paths.append(chunk_dest)
-
             # 9. Compose final video
             output_filename = f"verse_{index:03d}_{surah}_{ayah}.mp4"
             output_path = os.path.join(out_dir, output_filename)
-            log("  Composing final video with FFmpeg...")
-            compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
-                          chunk_timings=chunk_timings, audio_delay_s=audio_delay)
+
+            if translations is not None:
+                if chunk_timings is not None:
+                    starts = [t[0] for t in chunk_timings]
+                else:
+                    chunk_dur = audio_duration / len(chunks)
+                    starts = [i * chunk_dur for i in range(len(chunks))]
+                windows = list(zip(starts, starts[1:] + [audio_duration]))
+                ref_args = (surah_name, surah_name_ar, surah, ayah, ayah_end)
+                overlay_paths, overlay_timings = build_translation_overlays(
+                    chunks, windows, per_ayah_durations, ayah, translations, ref_args, tmpdir)
+                cum = 0.0
+                for offset, dur in enumerate(per_ayah_durations):
+                    log(f"    ayah {ayah + offset} translation at video t={audio_delay + cum:.2f}s "
+                        f"(audio {cum:.2f}-{cum + dur:.2f}s)")
+                    cum += dur
+                log(f"  Composing {len(overlay_paths)} translation overlays with FFmpeg...")
+                compose_video(bg_path, overlay_paths, audio_path, output_path, audio_duration,
+                              video_duration, chunk_timings=overlay_timings, audio_delay_s=audio_delay)
+            else:
+                chunk_paths = []
+                for ci, chunk in enumerate(chunks):
+                    chunk_dest = os.path.join(tmpdir, f"chunk_{ci:02d}.png")
+                    render_chunk_overlay(chunk, surah_name, surah_name_ar, surah, ayah, ayah_end, chunk_dest)
+                    chunk_paths.append(chunk_dest)
+                log("  Composing final video with FFmpeg...")
+                compose_video(bg_path, chunk_paths, audio_path, output_path, audio_duration, video_duration,
+                              chunk_timings=chunk_timings, audio_delay_s=audio_delay)
 
         # 10. Verify audio in output
         verify_video_has_audio(output_path)
@@ -1004,7 +1093,8 @@ def render_plan(plan_path, subtitles=True):
     log(f"Planned reel: {verse['name']} ({ref}) -> {plan_dir}")
 
     output_path = process_verse(verse, 1, 1, subtitles=subtitles, output_dir=plan_dir,
-                                 max_total_s=plan.get("budget_s"))
+                                 max_total_s=plan.get("budget_s"),
+                                 translation=plan.get("translation", False))
 
     from captions import build_caption, build_youtube_title, build_youtube_description
     sidecars = {
