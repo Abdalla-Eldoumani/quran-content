@@ -144,7 +144,7 @@ def main():
     try:
         message_id = send_message(msg, host, port, user, password)
     except (smtplib.SMTPException, OSError) as e:
-        print(f"ERROR: SMTP delivery failed: {e}")
+        print(f"ERROR: SMTP delivery failed: {str(e)[:300]}")
         sys.exit(1)
 
     print(f"Delivered. Message-ID: {message_id}")
