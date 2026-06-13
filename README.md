@@ -185,6 +185,40 @@ For detailed step-by-step instructions, see [docs/automation-setup.md](docs/auto
 
 `state.json` tracks two cursors: `next_index` (which verse to generate next) and `next_post_index` (which verse to post next). This lets you batch-generate videos with `generate_videos.py`, then drip-post them with `--post-all`. The workflow commits state back to the repo after each run.
 
+## Planned reels
+
+Beside the daily sequential pipeline there is a second mode for building a one-off themed reel. You name a theme or a current moment, pick a verified passage, and render a short video with the Arabic and a verbatim English translation. The finished file is emailed for review first, and posting stays a separate, explicit step. This mode never reads or advances the daily `state.json` cursors.
+
+Themes and their passages live in `themes.json`, a hand-maintained index. A passage renders only when its `verified` flag is true, which you set yourself after confirming the range reads as a complete thought on its own. Until then the planner lists it with an `UNVERIFIED` marker and the renderer refuses it. Nothing here chooses or interprets a passage for you: matching is plain keyword search and the selection is yours.
+
+Every planned reel finishes under 60 seconds. The planner measures the real recitation length for the chosen reciter before you commit, so a passage that would run long is shown as `OVER BUDGET` and cannot be picked. The translation is the Saheeh International (`en.sahih`) text, fetched at runtime and shown in a lower third that switches as each ayah is recited.
+
+1. Plan. Match a theme or a free-text topic and see the measured duration for each candidate:
+   ```bash
+   python3 plan_reel.py --topic "flood relief" --reciter ar.minshawi
+   python3 plan_reel.py --theme hardship-and-relief --pick 1
+   ```
+   `--pick N` writes `output/reels/<slug>/reel_plan.json`. Translation is on by default; pass `--no-translation` to omit it. Scenery defaults rotate through the project's nature queries; if you pass `--scenery`, keep it to nature terms (add aerial, drone, timelapse, or close up) so clips stay free of people and text.
+
+2. Render the picked plan into its own directory:
+   ```bash
+   python3 generate_videos.py --plan output/reels/<slug>/reel_plan.json
+   ```
+   This produces the mp4 and a caption sidecar beside it. It re-checks the duration budget before encoding and never touches `state.json`.
+
+3. Deliver the reel and caption to yourself for review over email:
+   ```bash
+   python3 deliver_reel.py output/reels/<slug>
+   ```
+   Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `DELIVER_TO` in the environment. A file at or over 22MB arrives as the caption plus a local path instead of an attachment.
+
+4. Post one specific file when you are ready, with a dry run first:
+   ```bash
+   python3 auto_post.py --video output/reels/<slug>/<file>.mp4 --caption-file output/reels/<slug>/caption.txt --dry-run
+   python3 auto_post.py --video output/reels/<slug>/<file>.mp4 --caption-file output/reels/<slug>/caption.txt
+   ```
+   Direct posting records nothing in `state.json`. Instagram uploads through the Meta resumable endpoint; the caption, title, and description default to the sidecars beside the video.
+
 ## Manual posting
 
 You can also upload videos manually:
