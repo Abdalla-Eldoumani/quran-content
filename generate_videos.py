@@ -151,6 +151,27 @@ def fetch_verse_text(surah, ayah_start, ayah_end):
     return arabic_text, surah_name, surah_name_ar
 
 
+def fetch_translations(surah, ayah_start, ayah_end):
+    """Fetch the en.sahih translation for each ayah in the range, verbatim.
+
+    Returns a dict mapping ayah number to its translation text. Strips only
+    surrounding whitespace; raises on any non-200 response or empty text so a
+    planned reel never ships with a missing or partial translation.
+    """
+    translations = {}
+    for ayah in range(ayah_start, ayah_end + 1):
+        url = f"{ALQURAN_API_BASE}/ayah/{surah}:{ayah}/en.sahih"
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        text = resp.json()["data"]["text"].strip()
+        if not text:
+            raise RuntimeError(f"empty en.sahih translation for {surah}:{ayah}")
+        translations[ayah] = text
+        if ayah < ayah_end:
+            time.sleep(API_SLEEP_S)
+    return translations
+
+
 def fetch_audio(surah, ayah_start, ayah_end, reciter, dest):
     """Download recitation audio for a verse range. Concatenates if multiple ayahs."""
     audio_files = []
