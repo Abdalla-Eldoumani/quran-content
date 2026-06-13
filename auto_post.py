@@ -393,6 +393,7 @@ def main():
     # ── Direct mode: post one specific file, no state.json access ──
     if args.video:
         run_direct(args)
+        return
 
     state = load_state()
     verses = load_verses()
