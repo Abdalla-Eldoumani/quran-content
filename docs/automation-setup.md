@@ -225,7 +225,7 @@ To monitor ongoing runs:
 
 **"Instagram container status is ERROR"**
 - The video might be too large or in an unsupported format. Check that it's H.264 MP4, under 100MB, and under 90 seconds.
-- The public URL might have expired before Instagram could download it. The script retries with a fallback host.
+- ERROR is usually transient processing. The script uploads the file directly through Meta's resumable endpoint (no public URL), polls up to 30 times, and aborts without publishing on ERROR. Retry once before investigating.
 
 **"Meta token invalid"**
 - Page access tokens from the page token flow should be permanent, but if yours stops working, re-run `setup_meta.py` to get a fresh one. Then update the `META_ACCESS_TOKEN` secret in GitHub.
@@ -245,6 +245,28 @@ To monitor ongoing runs:
 - Go to Actions tab and make sure the workflow is enabled
 - Check that the repo has Actions enabled (Settings → Actions → General)
 - Scheduled workflows may be disabled if the repo has no activity for 60 days — push a commit to re-enable
+
+---
+
+## Planned reel delivery (optional)
+
+The planned-reel workflow (see the README) emails a finished reel to you for review with `deliver_reel.py`, which reads five SMTP variables from the environment or `.env`. The committed `.env.example` does not list them, so add them to your `.env`:
+
+```
+SMTP_HOST=
+SMTP_PORT=
+SMTP_USER=
+SMTP_PASS=
+DELIVER_TO=
+```
+
+- `SMTP_HOST` - mail server hostname, for example `smtp.gmail.com`
+- `SMTP_PORT` - the STARTTLS port, usually `587`
+- `SMTP_USER` - the sending account's address
+- `SMTP_PASS` - an app password for that account (for Gmail, create one under Google Account, Security, App passwords), never the login password
+- `DELIVER_TO` - the address that receives the reel for review
+
+`deliver_reel.py` attaches the mp4 when it is under 22MB and otherwise emails the caption with the file's local path. These variables are used only for local review delivery, not by the daily GitHub Actions pipeline.
 
 ---
 
