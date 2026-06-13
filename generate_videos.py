@@ -1036,6 +1036,9 @@ def process_verse(verse, index, total, subtitles=True, output_dir=None, max_tota
                 ref_args = (surah_name, surah_name_ar, surah, ayah, ayah_end)
                 overlay_paths, overlay_timings = build_translation_overlays(
                     chunks, windows, per_ayah_durations, ayah, translations, ref_args, tmpdir)
+                if not overlay_paths:
+                    raise RuntimeError("no translation overlays were built; per-ayah durations "
+                                       "do not align with the measured audio")
                 cum = 0.0
                 for offset, dur in enumerate(per_ayah_durations):
                     log(f"    ayah {ayah + offset} translation at video t={audio_delay + cum:.2f}s "
