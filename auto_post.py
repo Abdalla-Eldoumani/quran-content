@@ -70,38 +70,14 @@ def save_state(state):
     os.replace(STATE_TMP, STATE_FILE)
 
 
-def upload_to_temp_host(video_path):
-    """Upload video to a public URL for Meta API. Returns URL or None."""
-    import requests
-    # Try 0x0.st first
-    try:
-        logger.info("Uploading to 0x0.st...")
-        with open(video_path, "rb") as f:
-            resp = requests.post("https://0x0.st", files={"file": f}, timeout=120)
-        if resp.status_code == 200:
-            url = resp.text.strip()
-            logger.info(f"  Uploaded: {url}")
-            return url
-        logger.warning(f"  0x0.st returned {resp.status_code}")
-    except Exception as e:
-        logger.warning(f"  0x0.st failed: {e}")
-    # Fallback to file.io
-    try:
-        logger.info("Trying file.io as fallback...")
-        with open(video_path, "rb") as f:
-            resp = requests.post("https://file.io", files={"file": f}, timeout=120)
-        if resp.status_code == 200:
-            url = resp.json()["link"]
-            logger.info(f"  Uploaded: {url}")
-            return url
-        logger.warning(f"  file.io returned {resp.status_code}")
-    except Exception as e:
-        logger.warning(f"  file.io failed: {e}")
-    return None
+def post_to_instagram(video_path, caption, dry_run=False):
+    """Post a Reel to Instagram via the Meta resumable upload flow.
 
-
-def post_to_instagram(video_url, caption, dry_run=False):
-    """Post a Reel to Instagram via Meta Graph API."""
+    Creates a REELS container with upload_type=resumable, uploads the file bytes
+    to the rupload.facebook.com uri the container returns, then polls and
+    publishes. The access token is sent only in request data/headers and is
+    never logged; error responses are truncated in case they echo context.
+    """
     import requests
     token = os.environ.get("META_ACCESS_TOKEN", "")
     ig_user_id = os.environ.get("IG_USER_ID", "")
@@ -109,52 +85,71 @@ def post_to_instagram(video_url, caption, dry_run=False):
         logger.error("Instagram: META_ACCESS_TOKEN or IG_USER_ID not set")
         return False
     if dry_run:
-        logger.info("Instagram: DRY RUN — would create Reel container")
+        logger.info("Instagram: DRY RUN - would create a resumable REELS container, "
+                    "upload the file to rupload.facebook.com, poll status, and publish")
         return True
-    # Check token validity
+    # Fail fast with a clear message on an expired or invalid token.
     if requests.get(f"{GRAPH_API}/me", params={"access_token": token}, timeout=10).status_code != 200:
-        logger.error("Instagram: Token invalid. Re-run setup_meta.py")
+        logger.error("Instagram: token invalid or expired (Graph code 190). Re-run setup_meta.py")
         return False
-    # Create media container
-    logger.info("Instagram: Creating Reel container...")
+    # 1. Create a resumable Reel container.
+    logger.info("Instagram: creating resumable Reel container...")
     resp = requests.post(
         f"{GRAPH_API}/{ig_user_id}/media",
-        data={"media_type": "REELS", "video_url": video_url,
+        data={"media_type": "REELS", "upload_type": "resumable",
               "caption": caption, "access_token": token},
         timeout=30,
     )
     if resp.status_code != 200:
-        logger.error(f"Instagram: Container creation failed: {resp.text}")
+        logger.error(f"Instagram: container creation failed ({resp.status_code}): {resp.text[:300]}")
         return False
-    container_id = resp.json()["id"]
+    container = resp.json()
+    container_id = container.get("id")
+    upload_uri = container.get("uri")
+    if not container_id or not upload_uri:
+        logger.error(f"Instagram: missing container id or upload uri: {resp.text[:300]}")
+        return False
     logger.info(f"  Container ID: {container_id}")
-    # Poll for readiness (up to 5 minutes)
+    # 2. Upload the file bytes to the resumable endpoint.
+    file_size = os.path.getsize(video_path)
+    logger.info(f"Instagram: uploading {file_size} bytes to the resumable endpoint...")
+    with open(video_path, "rb") as f:
+        up = requests.post(
+            upload_uri,
+            headers={"Authorization": f"OAuth {token}",
+                     "offset": "0", "file_size": str(file_size)},
+            data=f.read(), timeout=300,
+        )
+    if up.status_code != 200:
+        logger.error(f"Instagram: file upload failed ({up.status_code}): {up.text[:300]}")
+        return False
+    # 3. Poll for readiness (hard cap of 30 polls).
     for _ in range(30):
         time.sleep(10)
-        resp = requests.get(
+        poll = requests.get(
             f"{GRAPH_API}/{container_id}",
             params={"fields": "status_code", "access_token": token}, timeout=10,
         )
-        status = resp.json().get("status_code", "")
+        status = poll.json().get("status_code", "")
         logger.info(f"  Container status: {status}")
         if status == "FINISHED":
             break
         if status == "ERROR":
-            logger.error(f"Instagram: Container error: {resp.text}")
+            logger.error(f"Instagram: container {container_id} error: {poll.text[:300]}")
             return False
     else:
-        logger.error("Instagram: Container timed out after 5 minutes")
+        logger.error(f"Instagram: container {container_id} not FINISHED after 30 polls; retry later")
         return False
-    # Publish
-    logger.info("Instagram: Publishing Reel...")
-    resp = requests.post(
+    # 4. Publish.
+    logger.info("Instagram: publishing Reel...")
+    pub = requests.post(
         f"{GRAPH_API}/{ig_user_id}/media_publish",
         data={"creation_id": container_id, "access_token": token}, timeout=30,
     )
-    if resp.status_code != 200:
-        logger.error(f"Instagram: Publish failed: {resp.text}")
+    if pub.status_code != 200:
+        logger.error(f"Instagram: publish failed ({pub.status_code}): {pub.text[:300]}")
         return False
-    logger.info(f"Instagram: Published (ID: {resp.json().get('id', '?')})")
+    logger.info(f"Instagram: published (ID: {pub.json().get('id', '?')})")
     return True
 
 
@@ -266,21 +261,9 @@ def post_one_video(video_path, verse, state, total, platform=None, dry_run=False
     post_meta = platform is None or platform == "meta"
     post_youtube = platform is None or platform == "youtube"
 
-    # Upload to temp host for Instagram (needs public URL)
-    video_url = None
-    if post_meta and not dry_run:
-        video_url = upload_to_temp_host(video_path)
-        if not video_url:
-            logger.warning("Could not upload to temp host — Instagram posting will fail")
-
     if post_meta:
         try:
-            if dry_run or video_url:
-                results["instagram"] = post_to_instagram(
-                    video_url or "https://example.com/dry-run.mp4", caption, dry_run=dry_run)
-            else:
-                logger.error("Instagram: No public video URL available")
-                results["instagram"] = False
+            results["instagram"] = post_to_instagram(video_path, caption, dry_run=dry_run)
         except Exception as e:
             logger.error(f"Instagram: {e}")
             results["instagram"] = False
