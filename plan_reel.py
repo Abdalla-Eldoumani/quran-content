@@ -11,8 +11,11 @@ religious text.
 """
 
 import argparse
+import datetime
 import io
+import json
 import os
+import re
 import sys
 import time
 
@@ -32,11 +35,13 @@ from generate_videos import (
     EXTRA_DURATION_S,
     get_audio_duration,
 )
+from generate_verses_json import SCENERY_QUERIES
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(SCRIPT_DIR, "cache", "audio")
+REELS_DIR = os.path.join(SCRIPT_DIR, "output", "reels")
 DEFAULT_RECITER = "ar.minshawi"
 DEFAULT_MAX_SECONDS = 59
 LEAD_IN_OUTRO_S = AUDIO_DELAY_S + EXTRA_DURATION_S  # lead-in (1.5) + outro (3.0)
@@ -173,6 +178,78 @@ def print_candidates(candidates, reciter, max_seconds):
     return evaluations
 
 
+# ── Pick and write plan ──────────────────────────────────────────────────────
+
+def _slugify(name):
+    """Lowercase, hyphenate a passage name for use in a directory slug."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "passage"
+
+
+def choose_scenery(passage, override):
+    """Return the scenery query: the override if given, else a rotation by reference."""
+    if override:
+        return override
+    idx = (passage["surah"] + passage["ayah"] + passage["ayah_end"]) % len(SCENERY_QUERIES)
+    return SCENERY_QUERIES[idx]
+
+
+def do_pick(candidates, index, reciter, max_seconds, translation, scenery):
+    """Write reel_plan.json for candidate `index`, or refuse with a named reason."""
+    if index < 1 or index > len(candidates):
+        print(f"ERROR: --pick {index} is out of range (1..{len(candidates)}).")
+        sys.exit(1)
+    theme, passage = candidates[index - 1]
+    ev = evaluate_candidate(passage, reciter, max_seconds)
+
+    reasons = []
+    if not passage["verified"]:
+        reasons.append("passage is UNVERIFIED; confirm the standalone reading and set "
+                       "verified to true in themes.json first")
+    if ev["no_audio"]:
+        reasons.append(f"no audio available for reciter {reciter}")
+    elif ev["over_budget"]:
+        reasons.append(f"OVER BUDGET: audio {ev['total']:.1f}s exceeds the "
+                       f"{audio_budget(max_seconds):.1f}s budget for a {max_seconds:.0f}s video "
+                       "(choose a shorter passage or a faster reciter)")
+    if reasons:
+        print(f"ERROR: cannot pick '{passage['name']}' ({passage_ref(passage)}):")
+        for reason in reasons:
+            print(f"  - {reason}")
+        sys.exit(1)
+
+    plan = {
+        "surah": passage["surah"],
+        "ayah": passage["ayah"],
+        "ayah_end": passage["ayah_end"],
+        "name": passage["name"],
+        "theme": theme["slug"],
+        "reciter": reciter,
+        "scenery_query": choose_scenery(passage, scenery),
+        "translation": translation,
+        "per_ayah_durations": [round(d, 3) for d in ev["durations"]],
+        "audio_total_s": round(ev["total"], 3),
+        "budget_s": max_seconds,
+        "created": datetime.date.today().isoformat(),
+    }
+    out_dir = os.path.join(
+        REELS_DIR,
+        f"{passage['surah']}_{passage['ayah']}_{passage['ayah_end']}_{_slugify(passage['name'])}",
+    )
+    os.makedirs(out_dir, exist_ok=True)
+    plan_path = os.path.join(out_dir, "reel_plan.json")
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(plan, f, indent=2, ensure_ascii=False)
+
+    print(f"Wrote {plan_path}")
+    print(f"  Passage: {passage['name']} ({passage_ref(passage)}), reciter {reciter}, "
+          f"audio {ev['total']:.1f}s, translation {'on' if translation else 'off'}")
+    if passage["ayah"] == 1:
+        print("  Note: passage starts at ayah 1; the recitation may include the basmala, "
+              "so the first ayah's translation can appear during it.")
+    print(f"  Render with: python3 generate_videos.py --plan {plan_path}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def build_parser():
@@ -199,11 +276,24 @@ def main():
         sys.exit(1)
 
     themes = theme_lib.load_themes()
-    candidates = resolve_candidates(
-        themes, theme_slug=args.theme, topic=args.topic,
-        list_unverified=args.list_unverified,
-    )
-    print_candidates(candidates, args.reciter, args.max_seconds)
+    try:
+        candidates = resolve_candidates(
+            themes, theme_slug=args.theme, topic=args.topic,
+            list_unverified=args.list_unverified,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+
+    if not candidates:
+        print("No matching passages.")
+        sys.exit(0)
+
+    if args.pick is not None:
+        do_pick(candidates, args.pick, args.reciter, args.max_seconds,
+                args.translation, args.scenery)
+    else:
+        print_candidates(candidates, args.reciter, args.max_seconds)
 
 
 if __name__ == "__main__":
