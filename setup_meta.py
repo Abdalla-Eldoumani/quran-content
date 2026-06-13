@@ -56,7 +56,7 @@ def main():
     )
     if resp.status_code != 200:
         print(f"ERROR: Token exchange failed ({resp.status_code})")
-        print(f"Response: {resp.text}")
+        print(f"Response: {resp.text[:300]}")
         print("\nCheck that META_APP_ID, META_APP_SECRET, and META_SHORT_TOKEN are correct.")
         sys.exit(1)
 
@@ -72,7 +72,7 @@ def main():
     )
     if resp.status_code != 200:
         print(f"ERROR: Failed to fetch pages ({resp.status_code})")
-        print(f"Response: {resp.text}")
+        print(f"Response: {resp.text[:300]}")
         sys.exit(1)
 
     pages = resp.json().get("data", [])
@@ -139,7 +139,7 @@ def main():
             username = resp.json().get("username", "unknown")
             print(f"\nSETUP COMPLETE. Instagram account: @{username}")
         else:
-            print(f"WARNING: Token test failed ({resp.status_code}): {resp.text}")
+            print(f"WARNING: Token test failed ({resp.status_code}): {resp.text[:300]}")
             print("The token was saved but may not work. Re-run setup if posting fails.")
     else:
         print("\nSETUP PARTIALLY COMPLETE.")
