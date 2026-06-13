@@ -11,6 +11,7 @@ well-known passages getting their own dedicated entries.
 """
 
 import json
+import os
 import random
 
 # ── Surah metadata: (name_en, total_ayahs) ──────────────────────────────────
@@ -713,7 +714,7 @@ def main():
     print(f"  Scenery queries: {len(SCENERY_QUERIES)}")
     
     # Write output
-    output_path = "/home/claude/verses.json"
+    output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verses.json")
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(final, f, indent=2, ensure_ascii=False)
     
