@@ -271,6 +271,11 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
 
+    if not re.match(r"^[A-Za-z0-9._-]+$", args.reciter):
+        print("ERROR: --reciter must be an edition id such as ar.minshawi "
+              "(letters, digits, dot, dash, underscore only).")
+        sys.exit(1)
+
     if not (args.theme or args.topic or args.list_unverified):
         print("ERROR: choose one of --theme, --topic, or --list-unverified.")
         sys.exit(1)
