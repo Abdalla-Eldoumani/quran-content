@@ -35,7 +35,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(SCRIPT_DIR, "state.json")
 STATE_TMP = STATE_FILE + ".tmp"
 LOG_FILE = os.path.join(OUTPUT_DIR, "auto_post.log")
-GRAPH_API = "https://graph.facebook.com/v21.0"
+GRAPH_API_VERSION = "v25.0"
+GRAPH_API = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
 logger = logging.getLogger("auto_post")
 
