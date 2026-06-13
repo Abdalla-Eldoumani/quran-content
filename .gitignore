@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 output/
+cache/
 .env
 # state.json is intentionally tracked (not ignored) for workflow progress
 state.json.tmp
