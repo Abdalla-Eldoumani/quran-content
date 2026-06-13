@@ -25,7 +25,8 @@ except ImportError:
 import os
 
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-GRAPH_API = "https://graph.facebook.com/v21.0"
+GRAPH_API_VERSION = "v25.0"
+GRAPH_API = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
 
 def main():
